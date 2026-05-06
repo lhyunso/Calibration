@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# 빌드 산출물
+build/
+dist/
+*.spec.bak
+
+# 출력 파일 (개인 교정 데이터)
+outputs/
+
+# 설정 (개인 기본값)
+settings.json
+
+# macOS
+.DS_Store
+
+# IDE
+.venv/
+.idea/
+.vscode/
