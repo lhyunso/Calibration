@@ -355,8 +355,9 @@ class CalibrationPdfWriter:
             elems.append(Spacer(1, 0.3*cm))
             elems.append(Paragraph(title, styles["h1"]))
 
-            header = [_hdr("채널명", styles), _hdr("Excitation", styles),
-                      _hdr("Gain", styles), _hdr("Offset", styles)]
+            header = [_hdr("채널명", styles), _hdr("Exc.(mA)", styles),
+                      _hdr("Gain(측정)", styles), _hdr("Gain(이론)", styles),
+                      _hdr("Gain편차", styles), _hdr("Offset", styles)]
             header += [_hdr(f"{r:.0f}Ω", styles) for r in rs]
             data = [header]
 
@@ -365,12 +366,15 @@ class CalibrationPdfWriter:
                 offset_val = getattr(cal, offset_key)
                 dev_dict   = getattr(cal, dev_key)
                 tol = self.sensor.tolerance_ohm
+                gain_dev = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
+                            if cal.gain_theoretical else 0.0)
 
-                row_bg = C_ALT if ri % 2 == 0 else C_WHITE
                 row_data = [
                     _cell(ch, styles),
-                    _cell(f"{cal.excitation:.4f}", styles),
+                    _cell(f"{cal.excitation * 1000:.3g}", styles),
                     _cell(f"{cal.gain:.6f}", styles),
+                    _cell(f"{cal.gain_theoretical:.6f}", styles),
+                    _cell(f"{gain_dev:+.3f}%", styles),
                     _cell(f"{offset_val:.6f}", styles),
                 ]
                 for r in rs:
@@ -378,7 +382,7 @@ class CalibrationPdfWriter:
                     row_data.append(_dev_cell(dev, tol, styles))
                 data.append(row_data)
 
-            cw = [3.0*cm, 2.2*cm, 2.2*cm, 2.4*cm] + [1.8*cm] * n_rs
+            cw = [2.2*cm, 1.6*cm, 2.0*cm, 2.0*cm, 1.6*cm, 2.0*cm] + [1.6*cm] * n_rs
             t = Table(data, colWidths=cw, repeatRows=1)
             ts = TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), C_NAVY),
@@ -406,8 +410,11 @@ class CalibrationPdfWriter:
         ))
 
         # Result banner
-        hdr_row = [_hdr("", styles), _hdr("채널명", styles), _hdr("Excitation", styles),
-                   _hdr("Gain", styles), _hdr("Offset", styles)]
+        gain_dev_pct = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
+                        if cal.gain_theoretical else 0.0)
+        hdr_row = [_hdr("", styles), _hdr("채널명", styles), _hdr("Exc.(mA)", styles),
+                   _hdr("Gain(측정)", styles), _hdr("Gain(이론)", styles),
+                   _hdr("편차", styles), _hdr("Offset", styles)]
         hdr_row += [_hdr(f"{r:.0f}Ω", styles) for r in rs]
         banner_data = [hdr_row]
         for method_label, offset_val, dev_dict in [
@@ -415,15 +422,17 @@ class CalibrationPdfWriter:
             ("2-2\n(Mean)", cal.offset_mean, cal.dev_final_mean),
         ]:
             row = [_cell(method_label, styles), _cell(ch, styles),
-                   _cell(f"{cal.excitation:.4f}", styles),
+                   _cell(f"{cal.excitation * 1000:.3g}", styles),
                    _cell(f"{cal.gain:.6f}", styles),
+                   _cell(f"{cal.gain_theoretical:.6f}", styles),
+                   _cell(f"{gain_dev_pct:+.3f}%", styles),
                    _cell(f"{offset_val:.6f}", styles)]
             for r in rs:
                 dev = dev_dict.get(r)
                 row.append(_dev_cell(dev, tol, styles))
             banner_data.append(row)
 
-        cw = [1.5*cm, 2.5*cm, 2.0*cm, 2.2*cm, 2.2*cm] + [1.8*cm] * len(rs)
+        cw = [1.2*cm, 2.0*cm, 1.5*cm, 2.0*cm, 2.0*cm, 1.5*cm, 2.0*cm] + [1.5*cm] * len(rs)
         banner = Table(banner_data, colWidths=cw)
         banner.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), C_NAVY),
@@ -467,7 +476,11 @@ class CalibrationPdfWriter:
         ddata.append(_drow("3) 저항(before gain)", "Ref", [r for r in rs]))
         ddata.append(_drow("", "AVG",  [cal.r_before_gain.get(r) for r in rs]))
         ddata.append(_drow("", "편차", [cal.dev_before_gain.get(r) for r in rs]))
-        ddata.append(_drow("4) Gain", f"{cal.gain:.8f}", [None]*len(rs)))
+        gain_dev = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
+                    if cal.gain_theoretical else 0.0)
+        ddata.append(_drow("4) Gain (측정)", f"{cal.gain:.8f}",          [None]*len(rs)))
+        ddata.append(_drow("   Gain (이론)", f"{cal.gain_theoretical:.6f}", [None]*len(rs)))
+        ddata.append(_drow("   Gain 편차",   f"{gain_dev:+.3f}%",        [None]*len(rs)))
         ddata.append(_drow("5) 저항(after gain)", "AVG",  [cal.r_after_gain_avg.get(r) for r in rs]))
         ddata.append(_drow("", "MIN",  [cal.r_after_gain_min.get(r) for r in rs]))
         ddata.append(_drow("", "MAX",  [cal.r_after_gain_max.get(r) for r in rs]))

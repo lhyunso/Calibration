@@ -457,31 +457,29 @@ class CalibrationXlsxWriter:
         _hdr(ws, r, COL_SEC,  "구분")
         _hdr(ws, r, COL_ITEM, "채널명")
         # Will add more header cols below; using inline approach
-        header_extra = ["Excitation", "Gain", "Offset"] + [f"{x:.0f}Ω" for x in rs]
-        for j, txt in enumerate(header_extra):
+        hcols = ["Excitation(mA)", "Gain(측정)", "Gain(이론)", "Gain편차(%)", "Offset"] + \
+                [f"{x:.0f}Ω" for x in rs]
+        for j, txt in enumerate(hcols):
             _hdr(ws, r, COL_RES + j, txt)
         r += 1
 
         def _res_row(label, offset_val, devs_dict):
+            gain_dev = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
+                        if cal.gain_theoretical else 0.0)
             _sec(ws, r, COL_SEC, label)
             _val(ws, r, COL_ITEM, ch)
-            _val(ws, r, COL_RES,     cal.excitation, "0.0000")
-            _val(ws, r, COL_RES + 1, cal.gain,       "0.000000")
-            _val(ws, r, COL_RES + 2, offset_val,     "0.000000")
+            _val(ws, r, COL_RES,     cal.excitation * 1000, "0.000")   # mA
+            _val(ws, r, COL_RES + 1, cal.gain,              "0.000000")
+            _val(ws, r, COL_RES + 2, cal.gain_theoretical,  "0.000000")
+            _val(ws, r, COL_RES + 3, gain_dev,              "+0.000")
+            _val(ws, r, COL_RES + 4, offset_val,            "0.000000")
             for j, res in enumerate(rs):
                 dev = devs_dict.get(res)
                 if dev is None:
-                    _val(ws, r, COL_RES + 3 + j, "-")
+                    _val(ws, r, COL_RES + 5 + j, "-")
                 else:
-                    _val(ws, r, COL_RES + 3 + j, dev, "0.0000",
+                    _val(ws, r, COL_RES + 5 + j, dev, "0.0000",
                          color=_pass_color(dev, tol))
-
-        # Re-map columns for summary: Excitation, Gain, Offset, then rs
-        # Overwrite header to match
-        prev_r = r - 1
-        hcols = ["Excitation", "Gain", "Offset"] + [f"{x:.0f}Ω" for x in rs]
-        for j, txt in enumerate(hcols):
-            ws.cell(row=prev_r, column=COL_RES + j).value = txt
 
         _res_row("2-1  (R_nom offset)", cal.offset_100,  cal.dev_final_100)
         r += 1
@@ -587,18 +585,28 @@ class CalibrationXlsxWriter:
               [cal.dev_before_gain.get(x) for x in rs], alt=True)
         r += 1
 
-        # 4) Gain
-        gc = ws.cell(row=r, column=COL_SEC,  value="4) Gain")
-        gv = ws.cell(row=r, column=COL_ITEM, value=f"{cal.gain:.8f}")
-        for c in (gc, gv):
-            c.fill      = _fill(C_LBLUE)
-            c.font      = _font(bold=True, size=8)
-            c.alignment = _align(h="left")
-            c.border    = _thin_border()
-        ws.merge_cells(start_row=r, start_column=COL_RES,
-                       end_row=r, end_column=COL_RES + n - 1)
-        ws.cell(row=r, column=COL_RES).border = _thin_border()
-        r += 1
+        # 4) Gain (측정값 + 이론값 + 편차)
+        gain_dev_pct = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
+                        if cal.gain_theoretical else 0.0)
+        for label, val in [
+            ("4) Gain (측정)",  f"{cal.gain:.8f}"),
+            ("   Gain (이론)",  f"{cal.gain_theoretical:.6f}  "
+                                f"= {self.sensor.excitation*1000:.2g}mA × "
+                                f"{self.sensor.r_nominal:.0f}Ω × "
+                                f"{self.sensor.inst_amp_gain:.0f}"),
+            ("   Gain 편차",    f"{gain_dev_pct:+.3f}%"),
+        ]:
+            gc = ws.cell(row=r, column=COL_SEC,  value=label)
+            gv = ws.cell(row=r, column=COL_ITEM, value=val)
+            for c in (gc, gv):
+                c.fill      = _fill(C_LBLUE)
+                c.font      = _font(bold=("측정" in label), size=8)
+                c.alignment = _align(h="left")
+                c.border    = _thin_border()
+            ws.merge_cells(start_row=r, start_column=COL_RES,
+                           end_row=r, end_column=COL_RES + n - 1)
+            ws.cell(row=r, column=COL_RES).border = _thin_border()
+            r += 1
 
         # 5) Resistance after gain
         _drow("5) 저항 (after gain)", "AVG",

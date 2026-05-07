@@ -13,8 +13,8 @@ class PT100Config(SensorConfig):
             name="RTD(PT100)",
             sensor_type="pt100",
             r_nominal=100.0,
-            excitation=0.001,      # 1mA excitation current (V/Ω)
-            inst_amp_gain=1.0,
+            excitation=0.001,      # 1 mA 정전류 여기
+            inst_amp_gain=10.0,    # 기본 Inst. Amp 게인 (RTD ×10)
             tolerance_ohm=0.385,
             default_resistances=[80.0, 90.0, 100.0, 110.0, 120.0],
             description="PT100 RTD, 3-wire, quarter bridge",
@@ -33,8 +33,8 @@ class PT1000Config(SensorConfig):
             name="RTD(PT1000)",
             sensor_type="pt1000",
             r_nominal=1000.0,
-            excitation=0.0001,     # 0.1mA excitation
-            inst_amp_gain=1.0,
+            excitation=0.0001,     # 0.1 mA 정전류 여기
+            inst_amp_gain=10.0,    # 기본 Inst. Amp 게인 (RTD ×10)
             tolerance_ohm=3.85,
             default_resistances=[800.0, 900.0, 1000.0, 1100.0, 1200.0],
             description="PT1000 RTD, 3-wire, quarter bridge",
@@ -46,29 +46,28 @@ class PT1000Config(SensorConfig):
 
 
 class Strain350Config(SensorConfig):
-    """350Ω Strain Gauge quarter bridge configuration."""
+    """350Ω Strain Gauge quarter bridge — 정전류 여기 방식.
+    하드웨어가 PT100/PT1000과 동일한 정전류 회로이므로 공식도 동일:
+      V_ref = (R − R_nom) / (2 × R_nom) × inst_amp_gain
+    """
     def __init__(self):
         super().__init__(
             name="Strain Gauge 350Ω",
             sensor_type="strain350",
             r_nominal=350.0,
-            excitation=3.5,        # 3.5V bridge excitation
-            inst_amp_gain=1.0,
+            excitation=0.001,      # 1 mA 정전류 여기
+            inst_amp_gain=100.0,   # 기본 Inst. Amp 게인 (Strain ×100)
             tolerance_ohm=1.35,
             default_resistances=[320.0, 330.0, 340.0, 350.0, 360.0, 370.0, 380.0],
-            description="350Ω Strain Gauge, 3-wire, quarter bridge",
-            ref_formula="V = (3.5/2) × (R_offset / 350) × Gain",
+            description="350Ω Strain Gauge, 3-wire, 정전류 여기",
+            ref_formula="V = (R − 350) / 700 × Gain",
         )
 
     def ref_voltage(self, r: float, gain: float = 1.0) -> float:
-        """Reference voltage for 350Ω strain gauge: V = (Vex/2) × (ΔR/R_nom) × gain"""
-        return (self.excitation / 2) * ((r - self.r_nominal) / self.r_nominal) * gain
-
-    def resistance_from_voltage(self, voltage: float, gain: float) -> float:
-        """Inverse of ref_voltage: R = R_nom + 2×V×R_nom / (Vex×gain)"""
-        if gain == 0:
-            return self.r_nominal
-        return self.r_nominal + (2 * voltage * self.r_nominal) / (self.excitation * gain)
+        """정전류 방식 기준전압 — PT100/PT1000과 동일 공식
+        V_ref = (R − R_nom) / (2 × R_nom) × gain
+        """
+        return (r - self.r_nominal) / (2 * self.r_nominal) * gain
 
 
 # Registry: sensor_type key → config instance

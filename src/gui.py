@@ -294,6 +294,11 @@ class CalibrationTab(ctk.CTkFrame):
         self._clear_csv_rows()
         for r in self._sensor.default_resistances:
             self._add_csv_row(resistance=r)
+        # inst_amp_gain 기본값 자동 전환 (RTD:10 / Strain:100)
+        if "inst_amp_gain" in self._meta_entries:
+            entry = self._meta_entries["inst_amp_gain"]
+            entry.delete(0, "end")
+            entry.insert(0, str(int(self._sensor.inst_amp_gain)))
 
     def _clear_csv_rows(self):
         for widgets in self._csv_rows:
@@ -383,18 +388,26 @@ class CalibrationTab(ctk.CTkFrame):
         ]:
             tv = getattr(self, attr)
             tv.delete(*tv.get_children())
-            new_cols = ("채널", "Gain", "Offset") + tuple(f"{int(r)}Ω" for r in rs) + ("판정",)
+            new_cols = ("채널", "Gain(측정)", "Gain(이론)", "Gain편차", "Offset") + \
+                       tuple(f"{int(r)}Ω" for r in rs) + ("판정",)
             tv["columns"] = new_cols
             for c in new_cols:
                 tv.heading(c, text=c)
-                tv.column(c, width=80 if c not in ("채널",) else 70, anchor="center")
+                tv.column(c, width=72, anchor="center")
+            tv.column("채널", width=55)
 
             for ch, cal in sorted(cals.items()):
-                off  = getattr(cal, off_k)
-                devs = getattr(cal, dev_k)
-                ok   = all(abs(devs.get(r, 0)) <= sensor.tolerance_ohm for r in rs)
+                off      = getattr(cal, off_k)
+                devs     = getattr(cal, dev_k)
+                ok       = all(abs(devs.get(r, 0)) <= sensor.tolerance_ohm for r in rs)
+                gain_dev = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
+                            if cal.gain_theoretical else 0.0)
                 tv.insert("", "end", tags=("pass" if ok else "fail",), values=(
-                    ch, f"{cal.gain:.6f}", f"{off:.6f}",
+                    ch,
+                    f"{cal.gain:.6f}",
+                    f"{cal.gain_theoretical:.6f}",
+                    f"{gain_dev:+.3f}%",
+                    f"{off:.6f}",
                     *[f"{devs.get(r, 0):.4f}" for r in rs],
                     "PASS" if ok else "FAIL",
                 ))

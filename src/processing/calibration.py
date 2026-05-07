@@ -30,6 +30,7 @@ class ChannelCalibration:
 
     # Computed
     gain: float = 0.0
+    gain_theoretical: float = 0.0   # I_exc × R_nom × G_inst (설계 기준값)
 
     # Per-resistance stats (keys are resistance values)
     decimals_avg: Dict[float, float] = field(default_factory=dict)
@@ -130,6 +131,9 @@ def calibrate_channel(
         cal.voltages_min[r] = (d_min - ADC_CENTER) * (ADC_VOLTAGE_RANGE / ADC_FULL_RANGE)
         cal.voltages_max[r] = (d_max - ADC_CENTER) * (ADC_VOLTAGE_RANGE / ADC_FULL_RANGE)
         cal.voltage_ref[r]  = _ref_v(r)   # ← 센서별 기준 전압
+
+    # 이론 게인: 하드웨어 설계값 기준 (I_exc × R_nom × G_inst)
+    cal.gain_theoretical = excitation * r_nominal * inst_amp_gain
 
     # Step 2: Gain from slope of measured voltage vs reference voltage
     r_list = [r for r in resistances if r in cal.voltages_avg and r in cal.voltage_ref]
