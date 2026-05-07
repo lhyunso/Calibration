@@ -99,30 +99,42 @@ def _pass_color(dev: float, tolerance: float) -> RGBColor:
 
 def _make_gain_chart(cal: ChannelCalibration) -> io.BytesIO:
     """
-    Create a scatter+line chart showing:
-      - Measured voltage vs Reference voltage (raw)
-      - Fitted line (gain)
-    Returns PNG bytes in a BytesIO buffer.
+    Line chart showing deviation at each step of calibration:
+      ① Before Gain  ② After Gain  ③ After Offset 2-1  ④ After Offset 2-2
     """
-    rs = sorted(cal.voltages_avg.keys())
-    v_meas = [cal.voltages_avg[r] for r in rs]
-    v_ref  = [cal.voltage_ref[r]  for r in rs]
+    rs = sorted(r for r in cal.dev_before_gain
+                if r in cal.dev_after_gain and r in cal.dev_final_100)
+    if not rs:
+        fig, ax = plt.subplots(figsize=(5.5, 3.2))
+        ax.set_title(f"Calibration Effect — {cal.channel}", fontsize=9, fontweight="bold")
+        buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=150); plt.close(fig)
+        buf.seek(0); return buf
+
+    x        = np.arange(len(rs))
+    x_labels = [f"{int(r)}" for r in rs]
+    tol      = cal.tolerance_max_100.get(rs[0], 0.385)
+
+    d_before    = [cal.dev_before_gain[r]  for r in rs]
+    d_after_g   = [cal.dev_after_gain[r]   for r in rs]
+    d_final_100 = [cal.dev_final_100[r]    for r in rs]
+    d_final_m   = [cal.dev_final_mean[r]   for r in rs]
 
     fig, ax = plt.subplots(figsize=(5.5, 3.2))
-    ax.scatter(v_ref, v_meas, color="#1F497D", zorder=5, s=50, label="Measured")
+    ax.plot(x, d_before,    "o-",  color="#A6A6A6", lw=1.5, ms=5, label="① Before Gain")
+    ax.plot(x, d_after_g,   "s-",  color="#1F497D", lw=1.5, ms=5, label="② After Gain")
+    ax.plot(x, d_final_100, "^-",  color="#ED7D31", lw=1.5, ms=5, label="③ Offset 2-1")
+    ax.plot(x, d_final_m,   "D-",  color="#70AD47", lw=1.5, ms=5, label="④ Offset 2-2")
 
-    # Fit line
-    if len(v_ref) >= 2:
-        coeffs = np.polyfit(v_ref, v_meas, 1)
-        x_line = np.linspace(min(v_ref)*1.05, max(v_ref)*1.05, 100)
-        y_line = np.polyval(coeffs, x_line)
-        ax.plot(x_line, y_line, color="#C00000", linewidth=1.5,
-                label=f"Gain={cal.gain:.6f}")
+    ax.axhline( tol, color="red",  ls="--", lw=1.0, label=f"+{tol}Ω")
+    ax.axhline(-tol, color="blue", ls="--", lw=1.0, label=f"-{tol}Ω")
+    ax.axhline(0,    color="black", ls="-",  lw=0.6)
 
-    ax.set_xlabel("Reference Voltage (V)", fontsize=8)
-    ax.set_ylabel("Measured Voltage (V)", fontsize=8)
-    ax.set_title(f"Gain Calibration — {cal.channel}", fontsize=9, fontweight="bold")
-    ax.legend(fontsize=7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, fontsize=7)
+    ax.set_xlabel("Resistance (Ω)", fontsize=8)
+    ax.set_ylabel("Deviation (Ω)", fontsize=8)
+    ax.set_title(f"Calibration Effect — {cal.channel}", fontsize=9, fontweight="bold")
+    ax.legend(fontsize=6, loc="best", ncol=2)
     ax.grid(True, linestyle="--", alpha=0.4)
     ax.tick_params(labelsize=7)
     fig.tight_layout()
