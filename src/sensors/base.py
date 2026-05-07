@@ -26,7 +26,11 @@ class SensorConfig:
         raise NotImplementedError
 
     def resistance_from_voltage(self, voltage: float, gain: float) -> float:
-        """Convert measured voltage back to resistance."""
+        """Convert measured voltage back to resistance.
+        RTD (PT100/PT1000): V = (R - R_nom) / (2×R_nom) × gain
+          → R = 2×R_nom×V / gain + R_nom
+        Override this method for sensors with different bridge excitation scaling.
+        """
         if gain == 0:
             return self.r_nominal
         return (2 * self.r_nominal * voltage / gain) + self.r_nominal

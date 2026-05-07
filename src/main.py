@@ -312,6 +312,7 @@ def run_calibration(sensor_type: str):
             excitation=sensor.excitation,
             inst_amp_gain=float(meta.get("inst_amp_gain", "1")),
             tolerance=sensor.tolerance_ohm,
+            sensor=sensor,
         )
     except Exception as e:
         console.print(f"[red]계산 오류: {e}[/red]")

@@ -61,8 +61,14 @@ class Strain350Config(SensorConfig):
         )
 
     def ref_voltage(self, r: float, gain: float = 1.0) -> float:
-        """Reference voltage for 350Ω strain gauge: V = (Vex/2) * (ΔR/R_nom) * gain"""
+        """Reference voltage for 350Ω strain gauge: V = (Vex/2) × (ΔR/R_nom) × gain"""
         return (self.excitation / 2) * ((r - self.r_nominal) / self.r_nominal) * gain
+
+    def resistance_from_voltage(self, voltage: float, gain: float) -> float:
+        """Inverse of ref_voltage: R = R_nom + 2×V×R_nom / (Vex×gain)"""
+        if gain == 0:
+            return self.r_nominal
+        return self.r_nominal + (2 * voltage * self.r_nominal) / (self.excitation * gain)
 
 
 # Registry: sensor_type key → config instance

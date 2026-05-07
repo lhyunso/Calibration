@@ -3,12 +3,16 @@ Core calibration math for Quarter Bridge measurement modules.
 
 Calibration flow:
 1. Extract AVG/MIN/MAX decimals from CSV for each resistance step
-2. Convert decimals → voltage: V = (D - 32767) * (20/65536)
-3. Reference voltage: V_ref = (R - R_nom) / (2*R_nom)
-4. Gain: slope of measured voltage vs reference voltage (linear regression over all steps)
-5. R_new with gain applied: R = (2*R_nom * V / gain) + R_nom
-6. Offset Method 2-1 (100Ω basis): offset = deviation at nominal R
-   Offset Method 2-2 (mean basis):  offset = mean of all deviations
+2. Convert decimals → voltage: V = (int(D) - 32767) × (20/65536)
+3. Reference voltage — sensor-specific:
+     PT100/PT1000 : V_ref = (R − R_nom) / (2×R_nom) × inst_amp_gain
+     Strain 350Ω  : V_ref = (Vex/2) × (R − R_nom) / R_nom × inst_amp_gain
+4. Gain: slope of measured voltage vs reference voltage (endpoints of resistance range)
+5. Resistance from voltage — sensor-specific:
+     PT100/PT1000 : R = 2×R_nom×V / gain + R_nom
+     Strain 350Ω  : R = R_nom + 2×V×R_nom / (Vex×gain)
+6. Offset Method 2-1: deviation at R_nom after gain correction
+   Offset Method 2-2: mean of all deviations
 """
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -64,18 +68,6 @@ class ChannelCalibration:
     tolerance_min_mean: Dict[float, float] = field(default_factory=dict)
 
 
-def _voltage_to_resistance(voltage: float, gain: float, r_nominal: float) -> float:
-    """Convert measured voltage to resistance using calibrated gain."""
-    if gain == 0:
-        return r_nominal
-    return (2 * r_nominal * voltage / gain) + r_nominal
-
-
-def _reference_voltage(r: float, r_nominal: float, inst_amp_gain: float = 1.0) -> float:
-    """Calculate reference (ideal) voltage for a given resistance."""
-    return (r - r_nominal) / (2 * r_nominal) * inst_amp_gain
-
-
 def calibrate_channel(
     channel: str,
     datasets: Dict[float, ResistanceDataset],
@@ -83,11 +75,14 @@ def calibrate_channel(
     excitation: float,
     inst_amp_gain: float = 1.0,
     tolerance: float = 0.385,
+    sensor=None,
 ) -> ChannelCalibration:
     """
     Run full calibration for a single channel across all resistance steps.
 
-    datasets: keyed by resistance value (e.g., 80, 90, 100, 110, 120)
+    datasets : keyed by resistance value (e.g., 80, 90, 100, 110, 120)
+    sensor   : SensorConfig instance — used for sensor-specific V_ref and R(V) formulas.
+               When None, falls back to generic RTD formula (backward compatible).
     """
     resistances = sorted(datasets.keys())
     cal = ChannelCalibration(
@@ -98,6 +93,23 @@ def calibrate_channel(
     )
 
     from config import ADC_CENTER, ADC_VOLTAGE_RANGE, ADC_FULL_RANGE
+
+    # ── 센서별 공식 선택 ────────────────────────────────────────────────────
+    def _ref_v(r: float) -> float:
+        """Reference voltage for this sensor type at resistance r."""
+        if sensor is not None:
+            return sensor.ref_voltage(r, inst_amp_gain)
+        # fallback: generic RTD formula
+        return (r - r_nominal) / (2 * r_nominal) * inst_amp_gain
+
+    def _r_from_v(v: float, g: float) -> float:
+        """Resistance from measured voltage using calibrated gain."""
+        if sensor is not None:
+            return sensor.resistance_from_voltage(v, g)
+        # fallback: generic RTD formula
+        if g == 0:
+            return r_nominal
+        return (2 * r_nominal * v / g) + r_nominal
 
     # Step 1: Collect decimals and convert to voltages
     for r in resistances:
@@ -117,7 +129,7 @@ def calibrate_channel(
         cal.voltages_avg[r] = (d_avg - ADC_CENTER) * (ADC_VOLTAGE_RANGE / ADC_FULL_RANGE)
         cal.voltages_min[r] = (d_min - ADC_CENTER) * (ADC_VOLTAGE_RANGE / ADC_FULL_RANGE)
         cal.voltages_max[r] = (d_max - ADC_CENTER) * (ADC_VOLTAGE_RANGE / ADC_FULL_RANGE)
-        cal.voltage_ref[r] = _reference_voltage(r, r_nominal, inst_amp_gain)
+        cal.voltage_ref[r]  = _ref_v(r)   # ← 센서별 기준 전압
 
     # Step 2: Gain from slope of measured voltage vs reference voltage
     r_list = [r for r in resistances if r in cal.voltages_avg and r in cal.voltage_ref]
@@ -125,22 +137,20 @@ def calibrate_channel(
         r_min_r = min(r_list)
         r_max_r = max(r_list)
         v_meas_range = cal.voltages_avg[r_max_r] - cal.voltages_avg[r_min_r]
-        v_ref_range = cal.voltage_ref[r_max_r] - cal.voltage_ref[r_min_r]
+        v_ref_range  = cal.voltage_ref[r_max_r]  - cal.voltage_ref[r_min_r]
         cal.gain = (v_meas_range / v_ref_range) * inst_amp_gain if v_ref_range != 0 else inst_amp_gain
 
-    # Step 3: Pre-gain resistance and deviation
+    # Step 3: Pre-gain resistance (inst_amp_gain=1 기준 역산)
     for r in r_list:
-        cal.r_before_gain[r] = _voltage_to_resistance(
-            cal.voltages_avg[r], inst_amp_gain, r_nominal
-        )
+        cal.r_before_gain[r]  = _r_from_v(cal.voltages_avg[r], inst_amp_gain)
         cal.dev_before_gain[r] = cal.r_before_gain[r] - r
 
-    # Step 4: Post-gain resistance
+    # Step 4: Post-gain resistance — 센서별 역산 공식 적용
     for r in r_list:
-        cal.r_after_gain_avg[r] = _voltage_to_resistance(cal.voltages_avg[r], cal.gain, r_nominal)
-        cal.r_after_gain_min[r] = _voltage_to_resistance(cal.voltages_min[r], cal.gain, r_nominal)
-        cal.r_after_gain_max[r] = _voltage_to_resistance(cal.voltages_max[r], cal.gain, r_nominal)
-        cal.dev_after_gain[r] = cal.r_after_gain_avg[r] - r
+        cal.r_after_gain_avg[r] = _r_from_v(cal.voltages_avg[r], cal.gain)
+        cal.r_after_gain_min[r] = _r_from_v(cal.voltages_min[r], cal.gain)
+        cal.r_after_gain_max[r] = _r_from_v(cal.voltages_max[r], cal.gain)
+        cal.dev_after_gain[r]   = cal.r_after_gain_avg[r] - r
 
     # Step 5: Offsets
     cal.offset_100 = cal.dev_after_gain.get(r_nominal, 0.0)
@@ -171,10 +181,15 @@ def calibrate_all_channels(
     inst_amp_gain: float = 1.0,
     tolerance: float = 0.385,
     channels: Optional[List[str]] = None,
+    sensor=None,
 ) -> Dict[str, ChannelCalibration]:
     """
     Calibrate all 16 channels.
     Returns dict keyed by channel name (CH01 … CH16).
+
+    sensor : SensorConfig instance (PT100Config / PT1000Config / Strain350Config).
+             Provides sensor-specific V_ref and resistance_from_voltage formulas.
+             When None, uses generic RTD formula (backward compatible).
     """
     from config import CHANNEL_NAMES
     if channels is None:
@@ -189,6 +204,7 @@ def calibrate_all_channels(
     results = {}
     for ch in channels:
         results[ch] = calibrate_channel(
-            ch, datasets, r_nominal, excitation, inst_amp_gain, tolerance
+            ch, datasets, r_nominal, excitation, inst_amp_gain, tolerance,
+            sensor=sensor,
         )
     return results

@@ -584,6 +584,7 @@ class CalibrationTab(ctk.CTkFrame):
                     excitation=sensor.excitation,
                     inst_amp_gain=gain,
                     tolerance=sensor.tolerance_ohm,
+                    sensor=sensor,
                 )
                 self._calibrations = cals
                 self._datasets     = ds
