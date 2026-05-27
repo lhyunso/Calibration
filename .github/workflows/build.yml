@@ -6,6 +6,9 @@ on:
       - "v*"          # v1.0.0 형식 태그를 push하면 자동 빌드
   workflow_dispatch:  # GitHub UI에서 수동 실행도 가능
 
+permissions:
+  contents: write   # GitHub Release 생성 및 파일 업로드에 필요
+
 jobs:
   build-windows:
     runs-on: windows-latest
