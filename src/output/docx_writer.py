@@ -312,21 +312,21 @@ class CalibrationDocxWriter:
 
         # ── Row 0: Title ──────────────────────────────────────────────────────
         # cells[0] = cells[1] = cells[2] (merged) — contains the title text
-        _replace_cell_text(tbl.rows[0].cells[0], "캘리브레이션 성적서")
+        _replace_cell_text(tbl.rows[0].cells[0], "Calibration Report")
 
         # ── Row 1: Document number (3-col merged label cell) ──────────────────
         doc_no = m.get("doc_number", "")
         rev    = m.get("revision", "00")
         _replace_cell_text(tbl.rows[1].cells[0],
-                           f"문서번호 :  {doc_no}   Rev. {rev}")
+                           f"Document No. :  {doc_no}   Rev. {rev}")
 
         # ── Rows 3-7: label / value pairs ─────────────────────────────────────
         fields = [
-            (3,  "장치명",     m.get("module_name", "")),
-            (4,  "모델번호",   m.get("model", "")),
-            (5,  "시리얼번호", m.get("serial", "")),
-            (6,  "제조사",     m.get("manufacturer", "")),
-            (7,  "교정 유형",  f"{self.sensor.name} Sensor Calibration"),
+            (3,  "Module Name",   m.get("module_name", "")),
+            (4,  "Model No.",     m.get("model", "")),
+            (5,  "Serial No.",    m.get("serial", "")),
+            (6,  "Manufacturer",  m.get("manufacturer", "")),
+            (7,  "Cal. Type",     f"{self.sensor.name} Sensor Calibration"),
         ]
         for row_i, label, value in fields:
             _replace_cell_text(tbl.rows[row_i].cells[0], label)
@@ -335,9 +335,9 @@ class CalibrationDocxWriter:
 
         # ── Rows 9-11: label / value pairs ────────────────────────────────────
         fields2 = [
-            (9,  "담당자",     m.get("operator", "")),
-            (10, "시험 장소",  m.get("location", "")),
-            (11, "시험 일자",  m.get("date",
+            (9,  "Operator",   m.get("operator", "")),
+            (10, "Location",   m.get("location", "")),
+            (11, "Test Date",  m.get("date",
                                     datetime.now().strftime("%Y.%m.%d"))),
         ]
         for row_i, label, value in fields2:
@@ -357,7 +357,7 @@ class CalibrationDocxWriter:
     # ── Step 3: Calibration Setup section ────────────────────────────────────
 
     def _add_setup_section(self, doc: Document) -> None:
-        _section_header_para(doc, "교정 설정  /  Calibration Setup")
+        _section_header_para(doc, "Calibration Setup")
 
         m     = self.meta
         exc   = float(m.get("excitation_ma",
@@ -368,13 +368,13 @@ class CalibrationDocxWriter:
         rs_str = "  /  ".join(f"{r:.0f} Ω" for r in self.resistances)
 
         rows_data = [
-            ("센서 타입",   self.sensor.name,
-             "공칭 저항",   f"{self.sensor.r_nominal:.0f} Ω"),
-            ("여기 전류",   f"{exc:.3g} mA",
-             "Inst. Gain",  gain),
-            ("허용 오차",   f"±{self.tolerance:.4f} Ω",
-             "케이블",      cable),
-            ("모사 저항값", rs_str,   "", ""),
+            ("Sensor Type",  self.sensor.name,
+             "R Nominal",    f"{self.sensor.r_nominal:.0f} Ω"),
+            ("Excitation",   f"{exc:.3g} mA",
+             "Inst. Gain",   gain),
+            ("Tolerance",    f"±{self.tolerance:.4f} Ω",
+             "Cable",        cable),
+            ("Sim. R Values", rs_str,  "", ""),
         ]
         col_widths = [Cm(3.2), Cm(5.8), Cm(3.2), Cm(5.8)]
 
@@ -410,7 +410,7 @@ class CalibrationDocxWriter:
     # ── Step 4: Channel summary tables ───────────────────────────────────────
 
     def _add_summary(self, doc: Document) -> None:
-        _section_header_para(doc, "교정 결과 요약  /  Calibration Summary")
+        _section_header_para(doc, "Calibration Summary")
 
         rs   = self.resistances
         n_rs = len(rs)
@@ -439,8 +439,8 @@ class CalibrationDocxWriter:
             tbl.autofit   = False
 
             hdr    = tbl.rows[0]
-            h_lbls = (["채널", "Exc.(mA)", "G_cal", "V_offset [V]"]
-                      + [f"{r:.0f} Ω" for r in rs] + ["판정"])
+            h_lbls = (["Channel", "Exc.(mA)", "G_cal", "V_offset [V]"]
+                      + [f"{r:.0f} Ω" for r in rs] + ["Result"])
             for ci, (cell, lbl) in enumerate(zip(hdr.cells, h_lbls)):
                 cell.width = col_w[ci]
                 _col_header_cell(cell, lbl, size=8)
@@ -477,7 +477,7 @@ class CalibrationDocxWriter:
                 ok   = _is_pass(cal, rs, method)
                 cell = row.cells[4 + n_rs]
                 cell.width = col_w[4 + n_rs]
-                _data_cell(cell, "합격" if ok else "불합격", size=8,
+                _data_cell(cell, "PASS" if ok else "FAIL", size=8,
                            align=WD_ALIGN_PARAGRAPH.CENTER,
                            color=C_PASS if ok else C_FAIL, bg=bg)
                 _set_row_height_cm(row, 0.52)
@@ -493,7 +493,7 @@ class CalibrationDocxWriter:
 
         # ── Channel header ───────────────────────────────────────────────────
         header_p = doc.add_paragraph()
-        r_ch = header_p.add_run(f"채널 상세  —  {ch}")
+        r_ch = header_p.add_run(f"Channel Detail  —  {ch}")
         _set_font(r_ch, F_BODY, 11, bold=True, color=C_BLACK)
         header_p.add_run("    ")
         r_info = header_p.add_run(
@@ -505,7 +505,7 @@ class CalibrationDocxWriter:
         _para_spacing(header_p, before_dxa=0, after_dxa=80)
 
         # ── Coefficient banner (2-1 / 2-2) ───────────────────────────────────
-        _section_header_para(doc, "교정 계수  /  Calibration Coefficients")
+        _section_header_para(doc, "Calibration Coefficients")
 
         # cols: 구분(1.2) | 채널(1.8) | Exc(1.4) | G_cal(2.1) | V_offset(2.2) | Rs… | 판정(1.5)
         fixed_ch  = 10.2
@@ -519,8 +519,8 @@ class CalibrationDocxWriter:
         tbl.autofit   = False
 
         hdr    = tbl.rows[0]
-        h_lbls = (["구분", "채널", "Exc.(mA)", "G_cal", "V_offset [V]"]
-                  + [f"{r:.0f}Ω" for r in rs] + ["판정"])
+        h_lbls = (["Method", "Channel", "Exc.(mA)", "G_cal", "V_offset [V]"]
+                  + [f"{r:.0f}Ω" for r in rs] + ["Result"])
         for ci, (cell, lbl) in enumerate(zip(hdr.cells, h_lbls)):
             cell.width = col_w_ch[ci]
             _col_header_cell(cell, lbl, size=8)
@@ -561,7 +561,7 @@ class CalibrationDocxWriter:
 
             ok = _is_pass(cal, rs, method)
             _data_cell(row.cells[5 + n_rs],
-                       "합격" if ok else "불합격", size=8,
+                       "PASS" if ok else "FAIL", size=8,
                        align=WD_ALIGN_PARAGRAPH.CENTER,
                        color=C_PASS if ok else C_FAIL)
             _set_row_height_cm(row, 0.58)
@@ -577,7 +577,7 @@ class CalibrationDocxWriter:
 
         # ── Detail stats table ────────────────────────────────────────────────
         doc.add_paragraph()
-        _section_header_para(doc, "상세 측정 데이터  /  Measurement Detail")
+        _section_header_para(doc, "Measurement Detail")
 
         fixed_dt = 5.0
         r_cm_dt  = round((CONTENT_W - fixed_dt) / max(n_rs, 1), 3)
@@ -590,9 +590,9 @@ class CalibrationDocxWriter:
 
         def _hrow():
             row = dtbl.add_row()
-            _col_header_cell(row.cells[0], "구분", size=8,
+            _col_header_cell(row.cells[0], "Section", size=8,
                              align=WD_ALIGN_PARAGRAPH.LEFT)
-            _col_header_cell(row.cells[1], "항목", size=8,
+            _col_header_cell(row.cells[1], "Item", size=8,
                              align=WD_ALIGN_PARAGRAPH.LEFT)
             for j, r in enumerate(rs):
                 _col_header_cell(row.cells[2 + j], f"{r:.0f} Ω", size=8)
@@ -637,41 +637,41 @@ class CalibrationDocxWriter:
         _drow("", "MIN", [int(cal.decimals_min.get(r, 0)) for r in rs])
         _drow("", "MAX", [int(cal.decimals_max.get(r, 0)) for r in rs])
 
-        _drow("2) 전압 (before gain)",
+        _drow("2) Voltage (before gain)",
               "Ref", [cal.voltage_ref.get(r) for r in rs], bg=C_THEAD_BG)
         _drow("", "AVG", [cal.voltages_avg.get(r) for r in rs])
 
-        _drow("3) 저항 (before gain)",
+        _drow("3) Resistance (before gain)",
               "Ref", [r for r in rs], bg=C_THEAD_BG)
-        _drow("", "AVG",  [cal.r_before_gain.get(r)  for r in rs])
-        _drow("", "편차", [cal.dev_before_gain.get(r) for r in rs])
+        _drow("", "AVG", [cal.r_before_gain.get(r)   for r in rs])
+        _drow("", "Dev", [cal.dev_before_gain.get(r) for r in rs])
 
         _srow("4) G_cal", f"{cal.gain:.8f}", bg=C_THEAD_BG)
 
-        _drow("5) 저항 (after gain)",
-              "AVG",  [cal.r_after_gain_avg.get(r) for r in rs], bg=C_THEAD_BG)
-        _drow("", "MIN",  [cal.r_after_gain_min.get(r) for r in rs])
-        _drow("", "MAX",  [cal.r_after_gain_max.get(r) for r in rs])
-        _drow("", "편차", [cal.dev_after_gain.get(r)   for r in rs])
+        _drow("5) Resistance (after gain)",
+              "AVG", [cal.r_after_gain_avg.get(r) for r in rs], bg=C_THEAD_BG)
+        _drow("", "MIN", [cal.r_after_gain_min.get(r) for r in rs])
+        _drow("", "MAX", [cal.r_after_gain_max.get(r) for r in rs])
+        _drow("", "Dev", [cal.dev_after_gain.get(r)   for r in rs])
 
         _srow("6) V_offset",
               f"2-1: {cal.offset_100_v:.6f} V    /    "
               f"2-2: {cal.offset_mean_v:.6f} V",
               bg=C_THEAD_BG)
 
-        _drow("7) 2-1 최종 (100Ω offset)",
-              "AVG",     [cal.r_final_100_avg.get(r) for r in rs],
+        _drow("7) Final 2-1 (100Ω offset)",
+              "AVG",    [cal.r_final_100_avg.get(r) for r in rs],
               bg=C_THEAD_BG)
-        _drow("", "편차",    [cal.dev_final_100.get(r)     for r in rs])
-        _drow("", "허용 (+)", [cal.tolerance_max_100.get(r) for r in rs])
-        _drow("", "허용 (−)", [cal.tolerance_min_100.get(r) for r in rs])
+        _drow("", "Dev",   [cal.dev_final_100.get(r)     for r in rs])
+        _drow("", "Tol(+)", [cal.tolerance_max_100.get(r) for r in rs])
+        _drow("", "Tol(−)", [cal.tolerance_min_100.get(r) for r in rs])
 
-        _drow("8) 2-2 최종 (Mean offset)",
-              "AVG",     [cal.r_final_mean_avg.get(r) for r in rs],
+        _drow("8) Final 2-2 (Mean offset)",
+              "AVG",    [cal.r_final_mean_avg.get(r) for r in rs],
               bg=C_THEAD_BG)
-        _drow("", "편차",    [cal.dev_final_mean.get(r)     for r in rs])
-        _drow("", "허용 (+)", [cal.tolerance_max_mean.get(r) for r in rs])
-        _drow("", "허용 (−)", [cal.tolerance_min_mean.get(r) for r in rs])
+        _drow("", "Dev",   [cal.dev_final_mean.get(r)     for r in rs])
+        _drow("", "Tol(+)", [cal.tolerance_max_mean.get(r) for r in rs])
+        _drow("", "Tol(−)", [cal.tolerance_min_mean.get(r) for r in rs])
 
     # ── Public API ────────────────────────────────────────────────────────────
 
