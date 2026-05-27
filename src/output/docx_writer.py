@@ -1,14 +1,21 @@
 """
 DOCX calibration report generator.
-Design inspired by 'Calibration sheet template.docx'.
+Uses 'Calibration sheet template.docx' as the visual base:
+  - Rows 0-11 of the template table are preserved (header + info fields)
+  - Rows 12+ are removed and replaced with calibration-specific content
+  - Per-channel detail pages follow the same styling
+
+Template fonts  : 나눔스퀘어 ExtraBold (title), KoPub돋움체 Medium (body)
+Template colours: section header #666666 · table header #F2F2F2 · border black
+Page            : A4, margins top/bottom ~2 cm, left/right ~1.5 cm (from template)
 """
 import os
 import io
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from docx import Document
-from docx.shared import Pt, Cm, RGBColor, Inches
+from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.oxml.ns import qn
@@ -16,129 +23,209 @@ from docx.oxml import OxmlElement
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 import numpy as np
 
+from config import REFERENCE_DIR
 from processing.calibration import ChannelCalibration
 from sensors.base import SensorConfig
 
 
-# ── Colour palette ──────────────────────────────────────────────────────────
-C_HEADER_BG  = RGBColor(0x1F, 0x49, 0x7D)   # dark navy
-C_HEADER_FG  = RGBColor(0xFF, 0xFF, 0xFF)   # white
-C_SECTION_BG = RGBColor(0xD6, 0xE4, 0xF0)   # light blue
-C_ROW_ALT    = RGBColor(0xF2, 0xF7, 0xFB)   # very light blue
-C_PASS       = RGBColor(0x00, 0x70, 0xC0)   # blue (within tolerance)
-C_FAIL       = RGBColor(0xC0, 0x00, 0x00)   # red  (out of tolerance)
-C_BORDER     = RGBColor(0xA0, 0xA0, 0xA0)   # grey
+# ── Asset paths ───────────────────────────────────────────────────────────────
+TEMPLATE_PATH = os.path.join(REFERENCE_DIR, "Calibration sheet template.docx")
+
+# ── Colour palette ────────────────────────────────────────────────────────────
+C_GREY_BG  = RGBColor(0x66, 0x66, 0x66)   # dark grey — section header bg
+C_THEAD_BG = RGBColor(0xF2, 0xF2, 0xF2)   # light grey — table column header bg
+C_WHITE    = RGBColor(0xFF, 0xFF, 0xFF)
+C_BLACK    = RGBColor(0x00, 0x00, 0x00)
+C_ROW_ALT  = RGBColor(0xFA, 0xFA, 0xFA)   # alternating data row tint
+C_PASS     = RGBColor(0x00, 0x70, 0xC0)   # blue  — within tolerance
+C_FAIL     = RGBColor(0xC0, 0x00, 0x00)   # red   — out of tolerance
+
+# ── Fonts (same as template) ──────────────────────────────────────────────────
+F_TITLE = "나눔스퀘어 ExtraBold"
+F_BODY  = "KoPub돋움체 Medium"
+
+# ── Content width (template: A4 11906 DXA − margins 850×2 = 10206 DXA ≈ 18 cm) ─
+CONTENT_W  = 18.0          # cm
+_CM2DXA    = 1440 / 2.54   # 1 cm → DXA (twips)
 
 
-# ── Helper utilities ─────────────────────────────────────────────────────────
+def _cm_dxa(cm: float) -> int:
+    return int(cm * _CM2DXA)
 
-def _set_cell_bg(cell, rgb: RGBColor):
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    shd = OxmlElement("w:shd")
-    shd.set(qn("w:val"), "clear")
+
+# ── Low-level XML helpers ─────────────────────────────────────────────────────
+
+def _set_font(run, name: str, size: float, bold: bool = False,
+              color: Optional[RGBColor] = None) -> None:
+    run.bold = bold
+    run.font.size = Pt(size)
+    if color is not None:
+        run.font.color.rgb = color
+    rPr    = run._element.get_or_add_rPr()
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        rFonts = OxmlElement("w:rFonts")
+        rPr.insert(0, rFonts)
+    for attr in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+        rFonts.set(qn(attr), name)
+
+
+def _set_cell_bg(cell, rgb: RGBColor) -> None:
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd  = OxmlElement("w:shd")
+    shd.set(qn("w:val"),   "clear")
     shd.set(qn("w:color"), "auto")
-    shd.set(qn("w:fill"), str(rgb))
+    shd.set(qn("w:fill"),  f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}")
     tcPr.append(shd)
 
 
-def _set_cell_border(cell, sides=("top", "bottom", "left", "right"), size=4, color="A0A0A0"):
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    tcBorders = OxmlElement("w:tcBorders")
-    for side in sides:
-        border = OxmlElement(f"w:{side}")
-        border.set(qn("w:val"), "single")
-        border.set(qn("w:sz"), str(size))
-        border.set(qn("w:color"), color)
-        tcBorders.append(border)
-    tcPr.append(tcBorders)
+def _set_cell_borders(cell, color: str = "000000", size: int = 6) -> None:
+    tcPr = cell._tc.get_or_add_tcPr()
+    bdr  = OxmlElement("w:tcBorders")
+    for side in ("top", "bottom", "left", "right"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"),   "single")
+        b.set(qn("w:sz"),    str(size))
+        b.set(qn("w:color"), color)
+        b.set(qn("w:space"), "0")
+        bdr.append(b)
+    tcPr.append(bdr)
 
 
-def _para(cell, text: str, bold=False, italic=False, size=9,
-          align=WD_ALIGN_PARAGRAPH.LEFT, color: Optional[RGBColor] = None,
-          font_name="맑은 고딕"):
-    cell.paragraphs[0].clear()
-    p = cell.paragraphs[0]
-    p.alignment = align
-    run = p.add_run(text)
-    run.bold = bold
-    run.italic = italic
-    run.font.size = Pt(size)
-    run.font.name = font_name
-    run.font.color.rgb = color if color else RGBColor(0, 0, 0)
-    return p
-
-
-def _header_cell(cell, text: str, size=9, align=WD_ALIGN_PARAGRAPH.CENTER):
-    _set_cell_bg(cell, C_HEADER_BG)
-    _para(cell, text, bold=True, size=size, align=align, color=C_HEADER_FG)
+def _cell_write(cell, text: str, font: str = F_BODY, size: float = 9,
+                bold: bool = False,
+                align: WD_ALIGN_PARAGRAPH = WD_ALIGN_PARAGRAPH.LEFT,
+                color: Optional[RGBColor] = None) -> None:
+    para = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+    para.clear()
+    para.alignment = align
+    run = para.add_run(text)
+    _set_font(run, font, size, bold=bold, color=color)
     cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
 
-def _section_cell(cell, text: str, size=9):
-    _set_cell_bg(cell, C_SECTION_BG)
-    _para(cell, text, bold=True, size=size, align=WD_ALIGN_PARAGRAPH.LEFT)
+def _set_row_height_cm(row, cm: float) -> None:
+    trPr     = row._tr.get_or_add_trPr()
+    trHeight = OxmlElement("w:trHeight")
+    trHeight.set(qn("w:val"),   str(_cm_dxa(cm)))
+    trHeight.set(qn("w:hRule"), "atLeast")
+    trPr.append(trHeight)
+
+
+def _para_spacing(para, before_dxa: int = 0, after_dxa: int = 0) -> None:
+    sp = OxmlElement("w:spacing")
+    sp.set(qn("w:before"), str(before_dxa))
+    sp.set(qn("w:after"),  str(after_dxa))
+    para._p.get_or_add_pPr().append(sp)
+
+
+# ── Template field helpers ────────────────────────────────────────────────────
+
+def _replace_para_text(para, new_text: str) -> None:
+    """Replace all runs in a paragraph with new_text in the first run."""
+    if not para.runs:
+        run = para.add_run(new_text)
+        return
+    para.runs[0].text = new_text
+    for run in para.runs[1:]:
+        run.text = ""
+
+
+def _replace_cell_text(cell, new_text: str) -> None:
+    """Replace the first paragraph's text in a cell, preserving font."""
+    if cell.paragraphs:
+        _replace_para_text(cell.paragraphs[0], new_text)
+
+
+# ── Composite cell helpers (for new tables added after template) ──────────────
+
+def _col_header_cell(cell, text: str, size: float = 8,
+                     align: WD_ALIGN_PARAGRAPH = WD_ALIGN_PARAGRAPH.CENTER) -> None:
+    _set_cell_bg(cell, C_THEAD_BG)
+    _cell_write(cell, text, F_BODY, size, align=align)
+    _set_cell_borders(cell)
     cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
 
-def _fmt(val: Optional[float], digits=6) -> str:
-    if val is None:
-        return "-"
-    return f"{val:.{digits}f}"
+def _data_cell(cell, text: str, size: float = 8,
+               align: WD_ALIGN_PARAGRAPH = WD_ALIGN_PARAGRAPH.CENTER,
+               bold: bool = False,
+               color: Optional[RGBColor] = None,
+               bg: Optional[RGBColor] = None) -> None:
+    if bg is not None:
+        _set_cell_bg(cell, bg)
+    _cell_write(cell, text, F_BODY, size, bold=bold, align=align, color=color)
+    _set_cell_borders(cell)
+    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
 
-def _pass_color(dev: float, tolerance: float) -> RGBColor:
-    return C_PASS if abs(dev) <= tolerance else C_FAIL
+def _section_header_para(doc: Document, text: str) -> None:
+    """Full-width paragraph with dark-grey shading — section divider."""
+    para = doc.add_paragraph()
+    pPr  = para._p.get_or_add_pPr()
+    shd  = OxmlElement("w:shd")
+    shd.set(qn("w:val"),   "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"),  "666666")
+    pPr.append(shd)
+    sp = OxmlElement("w:spacing")
+    sp.set(qn("w:before"), "60")
+    sp.set(qn("w:after"),  "60")
+    pPr.append(sp)
+    run = para.add_run("  " + text)
+    _set_font(run, F_BODY, 9, bold=True, color=C_WHITE)
 
 
-# ── Chart generation ─────────────────────────────────────────────────────────
+# ── Formatting utilities ──────────────────────────────────────────────────────
+
+def _fmt(val: Optional[float], digits: int = 6) -> str:
+    return "-" if val is None else f"{val:.{digits}f}"
+
+
+def _pass_color(dev: float, tol: float) -> RGBColor:
+    return C_PASS if abs(dev) <= tol else C_FAIL
+
+
+def _is_pass(cal: ChannelCalibration, rs: List[float],
+             method: str = "100") -> bool:
+    dev_d = cal.dev_final_100  if method == "100" else cal.dev_final_mean
+    tol_d = cal.tolerance_max_100 if method == "100" else cal.tolerance_max_mean
+    return all(abs(dev_d.get(r, 0)) <= tol_d.get(r, 1e9)
+               for r in rs if r in dev_d)
+
+
+# ── Chart generators ──────────────────────────────────────────────────────────
 
 def _make_gain_chart(cal: ChannelCalibration) -> io.BytesIO:
-    """
-    Line chart showing deviation at each step of calibration:
-      ① Before Gain  ② After Gain  ③ After Offset 2-1  ④ After Offset 2-2
-    """
     rs = sorted(r for r in cal.dev_before_gain
                 if r in cal.dev_after_gain and r in cal.dev_final_100)
-    if not rs:
-        fig, ax = plt.subplots(figsize=(5.5, 3.2))
-        ax.set_title(f"Calibration Effect — {cal.channel}", fontsize=9, fontweight="bold")
-        buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=150); plt.close(fig)
-        buf.seek(0); return buf
-
-    x        = np.arange(len(rs))
-    x_labels = [f"{int(r)}" for r in rs]
-    tol      = cal.tolerance_max_100.get(rs[0], 0.385)
-
-    d_before    = [cal.dev_before_gain[r]  for r in rs]
-    d_after_g   = [cal.dev_after_gain[r]   for r in rs]
-    d_final_100 = [cal.dev_final_100[r]    for r in rs]
-    d_final_m   = [cal.dev_final_mean[r]   for r in rs]
-
     fig, ax = plt.subplots(figsize=(5.5, 3.2))
-    ax.plot(x, d_before,    "o-",  color="#A6A6A6", lw=1.5, ms=5, label="① Before Gain")
-    ax.plot(x, d_after_g,   "s-",  color="#1F497D", lw=1.5, ms=5, label="② After Gain")
-    ax.plot(x, d_final_100, "^-",  color="#ED7D31", lw=1.5, ms=5, label="③ Offset 2-1")
-    ax.plot(x, d_final_m,   "D-",  color="#70AD47", lw=1.5, ms=5, label="④ Offset 2-2")
-
-    ax.axhline( tol, color="red",  ls="--", lw=1.0, label=f"+{tol}Ω")
-    ax.axhline(-tol, color="blue", ls="--", lw=1.0, label=f"-{tol}Ω")
-    ax.axhline(0,    color="black", ls="-",  lw=0.6)
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(x_labels, fontsize=7)
+    if rs:
+        x   = np.arange(len(rs))
+        tol = cal.tolerance_max_100.get(rs[0], 0.385)
+        ax.plot(x, [cal.dev_before_gain[r] for r in rs],
+                "o-", color="#A6A6A6", lw=1.5, ms=5, label="① Before Gain")
+        ax.plot(x, [cal.dev_after_gain[r]  for r in rs],
+                "s-", color="#1F497D", lw=1.5, ms=5, label="② After Gain")
+        ax.plot(x, [cal.dev_final_100[r]   for r in rs],
+                "^-", color="#ED7D31", lw=1.5, ms=5, label="③ Offset 2-1")
+        ax.plot(x, [cal.dev_final_mean[r]  for r in rs],
+                "D-", color="#70AD47", lw=1.5, ms=5, label="④ Offset 2-2")
+        ax.axhline( tol, color="red",   ls="--", lw=1.0, label=f"+{tol}Ω")
+        ax.axhline(-tol, color="blue",  ls="--", lw=1.0, label=f"-{tol}Ω")
+        ax.axhline(0,    color="black", ls="-",  lw=0.6)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{int(r)}" for r in rs], fontsize=7)
+        ax.legend(fontsize=6, loc="best", ncol=2)
     ax.set_xlabel("Resistance (Ω)", fontsize=8)
-    ax.set_ylabel("Deviation (Ω)", fontsize=8)
-    ax.set_title(f"Calibration Effect — {cal.channel}", fontsize=9, fontweight="bold")
-    ax.legend(fontsize=6, loc="best", ncol=2)
+    ax.set_ylabel("Deviation (Ω)",  fontsize=8)
+    ax.set_title(f"Calibration Effect — {cal.channel}",
+                 fontsize=9, fontweight="bold")
     ax.grid(True, linestyle="--", alpha=0.4)
     ax.tick_params(labelsize=7)
     fig.tight_layout()
-
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150)
     plt.close(fig)
@@ -146,38 +233,30 @@ def _make_gain_chart(cal: ChannelCalibration) -> io.BytesIO:
     return buf
 
 
-def _make_deviation_chart(cal: ChannelCalibration, resistances: List[float]) -> io.BytesIO:
-    """
-    Bar chart showing deviation after gain correction for both offset methods,
-    with tolerance bands.
-    """
-    rs = sorted([r for r in resistances if r in cal.dev_final_100])
-    dev_100  = [cal.dev_final_100.get(r, 0) for r in rs]
-    dev_mean = [cal.dev_final_mean.get(r, 0) for r in rs]
-    tol      = cal.tolerance_max_100.get(rs[0], 0.385) if rs else 0.385
-
-    x = np.arange(len(rs))
-    width = 0.35
-
+def _make_deviation_chart(cal: ChannelCalibration,
+                          resistances: List[float]) -> io.BytesIO:
+    rs      = sorted(r for r in resistances if r in cal.dev_final_100)
+    dev_100 = [cal.dev_final_100.get(r, 0)  for r in rs]
+    dev_m   = [cal.dev_final_mean.get(r, 0) for r in rs]
+    tol     = cal.tolerance_max_100.get(rs[0], 0.385) if rs else 0.385
+    x, w    = np.arange(len(rs)), 0.35
     fig, ax = plt.subplots(figsize=(5.5, 3.2))
-    bars1 = ax.bar(x - width/2, dev_100,  width, label="Method 2-1 (100Ω offset)",
-                   color="#1F497D", alpha=0.8)
-    bars2 = ax.bar(x + width/2, dev_mean, width, label="Method 2-2 (Mean offset)",
-                   color="#ED7D31", alpha=0.8)
-
-    ax.axhline(y= tol, color="red",  linestyle="--", linewidth=1.0, label=f"+Tol ({tol}Ω)")
-    ax.axhline(y=-tol, color="blue", linestyle="--", linewidth=1.0, label=f"-Tol ({-tol}Ω)")
-    ax.axhline(y=0,    color="black",linestyle="-",  linewidth=0.5)
-
+    ax.bar(x - w/2, dev_100, w, label="Method 2-1 (100Ω offset)",
+           color="#1F497D", alpha=0.8)
+    ax.bar(x + w/2, dev_m,   w, label="Method 2-2 (Mean offset)",
+           color="#ED7D31", alpha=0.8)
+    ax.axhline( tol, color="red",   ls="--", lw=1.0, label=f"+Tol ({tol}Ω)")
+    ax.axhline(-tol, color="blue",  ls="--", lw=1.0, label=f"-Tol ({-tol}Ω)")
+    ax.axhline(0,    color="black", ls="-",  lw=0.5)
     ax.set_xticks(x)
     ax.set_xticklabels([f"{int(r)}Ω" for r in rs], fontsize=7)
     ax.set_ylabel("Deviation (Ω)", fontsize=8)
-    ax.set_title(f"Calibrated Deviation — {cal.channel}", fontsize=9, fontweight="bold")
+    ax.set_title(f"Calibrated Deviation — {cal.channel}",
+                 fontsize=9, fontweight="bold")
     ax.legend(fontsize=6, loc="upper right")
     ax.grid(True, axis="y", linestyle="--", alpha=0.4)
     ax.tick_params(labelsize=7)
     fig.tight_layout()
-
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150)
     plt.close(fig)
@@ -185,10 +264,16 @@ def _make_deviation_chart(cal: ChannelCalibration, resistances: List[float]) -> 
     return buf
 
 
-# ── Document builder ──────────────────────────────────────────────────────────
+# ── Document writer ───────────────────────────────────────────────────────────
 
 class CalibrationDocxWriter:
-    """Generates a calibration report DOCX."""
+    """
+    Generates a DOCX calibration report using the DANAM template layout.
+
+    The template's first 12 rows (header + info fields) are preserved verbatim
+    (including logo, fonts, and styling).  Rows 12 onwards are removed and
+    replaced with calibration-specific sections.
+    """
 
     def __init__(
         self,
@@ -196,408 +281,424 @@ class CalibrationDocxWriter:
         calibrations: Dict[str, ChannelCalibration],
         metadata: Optional[Dict[str, str]] = None,
     ):
-        self.sensor = sensor
+        self.sensor       = sensor
         self.calibrations = calibrations
-        self.channels = sorted(calibrations.keys())
-        self.meta = metadata or {}
+        self.channels     = sorted(calibrations.keys())
+        self.meta         = metadata or {}
         self.resistances: List[float] = []
         if calibrations:
             first = next(iter(calibrations.values()))
             self.resistances = sorted(first.voltages_avg.keys())
-        self.tolerance = float(self.meta.get("tolerance_ohm") or sensor.tolerance_ohm)
+        self.tolerance = float(
+            self.meta.get("tolerance_ohm") or sensor.tolerance_ohm
+        )
 
-    def _page_setup(self, doc: Document):
-        section = doc.sections[0]
-        section.page_width  = Cm(21.0)
-        section.page_height = Cm(29.7)
-        section.left_margin   = Cm(2.0)
-        section.right_margin  = Cm(2.0)
-        section.top_margin    = Cm(2.0)
-        section.bottom_margin = Cm(2.0)
+    # ── Step 1: Update template info fields ───────────────────────────────────
 
-    # ── Cover / Summary page ─────────────────────────────────────────────────
+    def _update_template_fields(self, tbl) -> None:
+        """
+        Rewrite the template's info fields (rows 0-11) with MCAL metadata.
 
-    def _add_cover(self, doc: Document):
-        """Calibration report cover page."""
-        # ── Document title ────────────────────────────────────────────────────
-        h = doc.add_paragraph()
-        h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = h.add_run("CALIBRATION REPORT")
-        run.bold = True
-        run.font.size = Pt(20)
-        run.font.name = "맑은 고딕"
-        run.font.color.rgb = C_HEADER_BG
+        Template row layout:
+          Row 0  : Title (cols 0-2 merged) | Logo (cols 3-4, image)
+          Row 1  : "Document number :" (cols 0-2 merged)
+          Row 2  : spacer
+          Row 3  : label [col 0] | value [cols 1-2] | empty [cols 3-4]
+          Rows 4-7  : same as row 3
+          Row 8  : spacer
+          Rows 9-11 : same as row 3
+        """
+        m = self.meta
 
-        # Doc number / revision line
-        dn_para = doc.add_paragraph()
-        dn_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        doc_no = self.meta.get("doc_number", f"CAL-{datetime.now().strftime('%Y')}-0001")
-        rev    = self.meta.get("revision", "00")
-        dn_run = dn_para.add_run(f"문서번호: {doc_no}   Rev: {rev}")
-        dn_run.font.size = Pt(8)
-        dn_run.font.name = "맑은 고딕"
-        dn_run.font.color.rgb = C_HEADER_BG
+        # ── Row 0: Title ──────────────────────────────────────────────────────
+        # cells[0] = cells[1] = cells[2] (merged) — contains the title text
+        _replace_cell_text(tbl.rows[0].cells[0], "Calibration Report")
 
-        doc.add_paragraph()  # spacer
+        # ── Row 1: Document number (3-col merged label cell) ──────────────────
+        doc_no = m.get("doc_number", "")
+        rev    = m.get("revision", "00")
+        _replace_cell_text(tbl.rows[1].cells[0],
+                           f"Document No. :  {doc_no}   Rev. {rev}")
 
-        # ── Info table (2-column label/value layout) ──────────────────────────
-        tbl = doc.add_table(rows=14, cols=4)
-        tbl.style = "Table Grid"
-        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        col_widths = [Cm(4.0), Cm(5.0), Cm(4.0), Cm(5.0)]
-        for row in tbl.rows:
-            for i, cell in enumerate(row.cells):
-                cell.width = col_widths[i]
+        # ── Rows 3-7: label / value pairs ─────────────────────────────────────
+        fields = [
+            (3,  "Module Name",   m.get("module_name", "")),
+            (4,  "Model No.",     m.get("model", "")),
+            (5,  "Serial No.",    m.get("serial", "")),
+            (6,  "Manufacturer",  m.get("manufacturer", "")),
+            (7,  "Cal. Type",     f"{self.sensor.name} Sensor Calibration"),
+        ]
+        for row_i, label, value in fields:
+            _replace_cell_text(tbl.rows[row_i].cells[0], label)
+            # cells[1] == cells[2] (merged value cell)
+            _replace_cell_text(tbl.rows[row_i].cells[1], value)
 
-        def _info(row_idx, label_l, val_l, label_r="", val_r=""):
-            row = tbl.rows[row_idx]
-            _section_cell(row.cells[0], label_l)
-            _para(row.cells[1], val_l, size=9)
-            if label_r:
-                _section_cell(row.cells[2], label_r)
-                _para(row.cells[3], val_r, size=9)
+        # ── Rows 9-11: label / value pairs ────────────────────────────────────
+        fields2 = [
+            (9,  "Operator",   m.get("operator", "")),
+            (10, "Location",   m.get("location", "")),
+            (11, "Test Date",  m.get("date",
+                                    datetime.now().strftime("%Y.%m.%d"))),
+        ]
+        for row_i, label, value in fields2:
+            _replace_cell_text(tbl.rows[row_i].cells[0], label)
+            _replace_cell_text(tbl.rows[row_i].cells[1], value)
+
+    # ── Step 2: Trim template table rows 12+ ─────────────────────────────────
+
+    @staticmethod
+    def _trim_table(tbl, keep_rows: int) -> None:
+        """Delete all rows from index keep_rows onwards."""
+        tbl_el   = tbl._tbl
+        all_rows = tbl_el.findall(qn("w:tr"))
+        for row_el in all_rows[keep_rows:]:
+            tbl_el.remove(row_el)
+
+    # ── Step 3: Calibration Setup section ────────────────────────────────────
+
+    def _add_setup_section(self, doc: Document) -> None:
+        _section_header_para(doc, "Calibration Setup")
+
+        m     = self.meta
+        exc   = float(m.get("excitation_ma",
+                            str(self.sensor.excitation * 1000))
+                      or str(self.sensor.excitation * 1000))
+        gain  = m.get("inst_amp_gain", str(int(self.sensor.inst_amp_gain)))
+        cable = m.get("cable", "전용케이블")
+        rs_str = "  /  ".join(f"{r:.0f} Ω" for r in self.resistances)
+
+        rows_data = [
+            ("Sensor Type",  self.sensor.name,
+             "R Nominal",    f"{self.sensor.r_nominal:.0f} Ω"),
+            ("Excitation",   f"{exc:.3g} mA",
+             "Inst. Gain",   gain),
+            ("Tolerance",    f"±{self.tolerance:.4f} Ω",
+             "Cable",        cable),
+            ("Sim. R Values", rs_str,  "", ""),
+        ]
+        col_widths = [Cm(3.2), Cm(5.8), Cm(3.2), Cm(5.8)]
+
+        tbl = doc.add_table(rows=len(rows_data), cols=4)
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        tbl.autofit   = False
+
+        for ri, (l1, v1, l2, v2) in enumerate(rows_data):
+            row = tbl.rows[ri]
+            for ci, cell in enumerate(row.cells):
+                cell.width = col_widths[ci]
+
+            _set_cell_bg(row.cells[0], C_THEAD_BG)
+            _cell_write(row.cells[0], "  " + l1, F_BODY, 8.5)
+            _set_cell_borders(row.cells[0])
+            _cell_write(row.cells[1], "  " + v1, F_BODY, 8.5)
+            _set_cell_borders(row.cells[1])
+
+            if l2:
+                _set_cell_bg(row.cells[2], C_THEAD_BG)
+                _cell_write(row.cells[2], "  " + l2, F_BODY, 8.5)
+                _set_cell_borders(row.cells[2])
+                _cell_write(row.cells[3], "  " + v2, F_BODY, 8.5)
+                _set_cell_borders(row.cells[3])
             else:
-                _para(row.cells[2], "", size=9)
-                _para(row.cells[3], "", size=9)
+                # 모사 저항값 row: merge cols 2-3 for wider display
+                merged = row.cells[2].merge(row.cells[3])
+                _cell_write(merged, "", F_BODY, 8.5)
+                _set_cell_borders(merged)
 
-        # Section 1: Module Info
-        _info(0,  "[ 모듈 정보 ]",           "",
-                   "",                         "")
-        _set_cell_bg(tbl.rows[0].cells[0], C_HEADER_BG)
-        _para(tbl.rows[0].cells[0], "[ 모듈 정보 ]",
-              bold=True, size=9, color=RGBColor(0xFF,0xFF,0xFF))
-        tbl.rows[0].cells[0].merge(tbl.rows[0].cells[3])
+            _set_row_height_cm(row, 0.58)
 
-        _info(1,  "모듈명 (Module Name)",     self.meta.get("module_name", ""),
-                   "모델명 (Model No.)",       self.meta.get("model", ""))
-        _info(2,  "시리얼 번호 (S/N)",         self.meta.get("serial", ""),
-                   "제조사 (Manufacturer)",    self.meta.get("manufacturer", ""))
-        _info(3,  "FW / SW 버전",             self.meta.get("fw_version", ""),
-                   "",                         "")
+    # ── Step 4: Channel summary tables ───────────────────────────────────────
 
-        # Section 2: Calibration Conditions
-        _set_cell_bg(tbl.rows[4].cells[0], C_HEADER_BG)
-        _para(tbl.rows[4].cells[0], "[ 교정 조건 ]",
-              bold=True, size=9, color=RGBColor(0xFF,0xFF,0xFF))
-        tbl.rows[4].cells[0].merge(tbl.rows[4].cells[3])
+    def _add_summary(self, doc: Document) -> None:
+        _section_header_para(doc, "Calibration Summary")
 
-        _info(5,  "교정 일자 (Date)",          self.meta.get("date", datetime.now().strftime("%Y.%m.%d")),
-                   "교정 장소 (Location)",     self.meta.get("location", ""))
-        _info(6,  "담당자 (Technician)",        self.meta.get("operator", ""),
-                   "온도 / 습도",              self.meta.get("temp_humidity", ""))
-
-        # Section 3: Calibration Setup
-        _set_cell_bg(tbl.rows[7].cells[0], C_HEADER_BG)
-        _para(tbl.rows[7].cells[0], "[ 교정 설정 ]",
-              bold=True, size=9, color=RGBColor(0xFF,0xFF,0xFF))
-        tbl.rows[7].cells[0].merge(tbl.rows[7].cells[3])
-
-        _info(8,  "센서 타입 (Sensor)",        self.sensor.name,
-                   "케이블 (Cable)",           self.meta.get("cable", "전용케이블"))
-        _info(9,  "공칭 저항 (Nominal R)",     f"{self.sensor.r_nominal:.0f} Ω",
-                   "Inst. Amp. Gain",          str(self.meta.get("inst_amp_gain", "1")))
-        _info(10, "모사저항 값",
-                  " / ".join(f"{r:.0f}Ω" for r in self.resistances),
-                   "허용 편차 (Tolerance)",   f"±{self.tolerance:.3f} Ω")
-        _info(11, "샘플링 속도",
-                  f"{self.meta.get('sampling_hz', 100)} Hz",
-                   "측정 시간",               f"{self.meta.get('duration_sec', '-')} 초")
-        _info(12, "채널 수 (Channels)",        str(len(self.channels)),
-                   "레퍼런스 수식",            self.sensor.ref_formula)
-        _info(13, "비고 (Remarks)",            self.meta.get("remarks", ""),
-                   "",                         "")
-
-        for row in tbl.rows:
-            for cell in row.cells:
-                _set_cell_border(cell)
-
-    # ── Channel summary table ─────────────────────────────────────────────────
-
-    def _add_summary(self, doc: Document):
-        doc.add_paragraph()
-        h = doc.add_paragraph("2-1  Calibration Summary (100Ω Offset Method)")
-        h.runs[0].bold = True
-        h.runs[0].font.size = Pt(11)
-        h.runs[0].font.color.rgb = C_HEADER_BG
-
-        rs = self.resistances
+        rs   = self.resistances
         n_rs = len(rs)
-        # cols: Channel | Excitation | G_cal | V_offset | dev×n
-        n_cols = 4 + n_rs
-        tbl = doc.add_table(rows=2 + len(self.channels), cols=n_cols)
-        tbl.style = "Table Grid"
-        tbl.autofit = False
-        _col_w = [Cm(2.0), Cm(1.6), Cm(2.8), Cm(2.8)] + \
-                 [Cm(max(1.2, (17.0 - 9.2) / n_rs))] * n_rs
-        for row in tbl.rows:
-            for i, cell in enumerate(row.cells):
-                cell.width = _col_w[i]
 
-        # Header row 1
-        row0 = tbl.rows[0]
-        for i, label in enumerate(["채널", "Exc.(mA)", "G_cal", "V_offset(2-1)"]):
-            _header_cell(row0.cells[i], label)
-        for j, r in enumerate(rs):
-            _header_cell(row0.cells[4 + j], f"{r:.0f}Ω")
+        # column widths: 채널(1.8) + Exc(1.4) + G_cal(2.1) + V_offset(2.8) + 판정(1.5) = 9.6
+        fixed_cm = 9.6
+        r_cm     = round((CONTENT_W - fixed_cm) / max(n_rs, 1), 3)
+        col_w    = ([Cm(1.8), Cm(1.4), Cm(2.1), Cm(2.8)]
+                    + [Cm(r_cm)] * n_rs
+                    + [Cm(1.5)])
+        n_cols   = 5 + n_rs
 
-        # Header row 2: units
-        row1 = tbl.rows[1]
-        for i, u in enumerate(["-", "mA", "-", "V"] + ["dev(Ω)"] * n_rs):
-            _header_cell(row1.cells[i], u, size=7)
+        for method, label, dev_attr, tol_attr, off_attr in [
+            ("100",  "Method 2-1  (100 Ω Offset)",
+             "dev_final_100",  "tolerance_max_100",  "offset_100_v"),
+            ("mean", "Method 2-2  (Mean Offset)",
+             "dev_final_mean", "tolerance_max_mean", "offset_mean_v"),
+        ]:
+            sp  = doc.add_paragraph()
+            rsp = sp.add_run(f"  {label}")
+            _set_font(rsp, F_BODY, 8.5, bold=True, color=C_GREY_BG)
+            _para_spacing(sp, before_dxa=110, after_dxa=20)
 
-        # Data rows
-        for ri, ch in enumerate(self.channels):
-            cal = self.calibrations[ch]
-            row = tbl.rows[2 + ri]
-            bg = C_ROW_ALT if ri % 2 == 0 else None
+            tbl = doc.add_table(rows=1 + len(self.channels), cols=n_cols)
+            tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+            tbl.autofit   = False
 
-            cells = [
+            hdr    = tbl.rows[0]
+            h_lbls = (["Channel", "Exc.(mA)", "G_cal", "V_offset [V]"]
+                      + [f"{r:.0f} Ω" for r in rs] + ["Result"])
+            for ci, (cell, lbl) in enumerate(zip(hdr.cells, h_lbls)):
+                cell.width = col_w[ci]
+                _col_header_cell(cell, lbl, size=8)
+            _set_row_height_cm(hdr, 0.52)
+
+            for ri, ch in enumerate(self.channels):
+                cal  = self.calibrations[ch]
+                row  = tbl.rows[1 + ri]
+                bg   = C_ROW_ALT if ri % 2 == 0 else None
+                devs = getattr(cal, dev_attr)
+                tols = getattr(cal, tol_attr)
+                off  = getattr(cal, off_attr)
+
+                for ci, (cell, txt) in enumerate(zip(row.cells, [
+                        ch,
+                        f"{cal.excitation * 1000:.3g}",
+                        f"{cal.gain:.6f}",
+                        f"{off:.6f}"])):
+                    cell.width = col_w[ci]
+                    _data_cell(cell, txt, size=8,
+                               align=WD_ALIGN_PARAGRAPH.CENTER, bg=bg)
+
+                for j, r in enumerate(rs):
+                    dev = devs.get(r)
+                    tol = tols.get(r, self.tolerance)
+                    txt = _fmt(dev, 4) if dev is not None else "-"
+                    clr = _pass_color(dev, tol) if dev is not None else None
+                    cell = row.cells[4 + j]
+                    cell.width = col_w[4 + j]
+                    _data_cell(cell, txt, size=8,
+                               align=WD_ALIGN_PARAGRAPH.CENTER,
+                               color=clr, bg=bg)
+
+                ok   = _is_pass(cal, rs, method)
+                cell = row.cells[4 + n_rs]
+                cell.width = col_w[4 + n_rs]
+                _data_cell(cell, "PASS" if ok else "FAIL", size=8,
+                           align=WD_ALIGN_PARAGRAPH.CENTER,
+                           color=C_PASS if ok else C_FAIL, bg=bg)
+                _set_row_height_cm(row, 0.52)
+
+    # ── Step 5: Per-channel detail page ──────────────────────────────────────
+
+    def _add_channel_page(self, doc: Document,
+                          ch_idx: int, ch: str) -> None:
+        doc.add_page_break()
+        cal  = self.calibrations[ch]
+        rs   = self.resistances
+        n_rs = len(rs)
+
+        # ── Channel header ───────────────────────────────────────────────────
+        header_p = doc.add_paragraph()
+        r_ch = header_p.add_run(f"Channel Detail  —  {ch}")
+        _set_font(r_ch, F_BODY, 11, bold=True, color=C_BLACK)
+        header_p.add_run("    ")
+        r_info = header_p.add_run(
+            f"{self.meta.get('doc_number', '')}  "
+            f"Rev.{self.meta.get('revision', '00')}     "
+            f"({ch_idx + 1} / {len(self.channels)})"
+        )
+        _set_font(r_info, F_BODY, 8, color=C_GREY_BG)
+        _para_spacing(header_p, before_dxa=0, after_dxa=80)
+
+        # ── Coefficient banner (2-1 / 2-2) ───────────────────────────────────
+        _section_header_para(doc, "Calibration Coefficients")
+
+        # cols: 구분(1.2) | 채널(1.8) | Exc(1.4) | G_cal(2.1) | V_offset(2.2) | Rs… | 판정(1.5)
+        fixed_ch  = 10.2
+        r_cm_ch   = round((CONTENT_W - fixed_ch) / max(n_rs, 1), 3)
+        col_w_ch  = ([Cm(1.2), Cm(1.8), Cm(1.4), Cm(2.1), Cm(2.2)]
+                     + [Cm(r_cm_ch)] * n_rs + [Cm(1.5)])
+        n_cols_ch = 6 + n_rs
+
+        tbl = doc.add_table(rows=3, cols=n_cols_ch)
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        tbl.autofit   = False
+
+        hdr    = tbl.rows[0]
+        h_lbls = (["Method", "Channel", "Exc.(mA)", "G_cal", "V_offset [V]"]
+                  + [f"{r:.0f}Ω" for r in rs] + ["Result"])
+        for ci, (cell, lbl) in enumerate(zip(hdr.cells, h_lbls)):
+            cell.width = col_w_ch[ci]
+            _col_header_cell(cell, lbl, size=8)
+        _set_row_height_cm(hdr, 0.52)
+
+        for row_i, (m_lbl, dev_d, tol_d, off_val, method) in enumerate([
+            ("2-1\n100Ω",
+             cal.dev_final_100,  cal.tolerance_max_100,  cal.offset_100_v,  "100"),
+            ("2-2\nMean",
+             cal.dev_final_mean, cal.tolerance_max_mean, cal.offset_mean_v, "mean"),
+        ], start=1):
+            row = tbl.rows[row_i]
+            for ci, cell in enumerate(row.cells):
+                cell.width = col_w_ch[ci]
+
+            _set_cell_bg(row.cells[0], C_THEAD_BG)
+            _cell_write(row.cells[0], m_lbl, F_BODY, 7.5, bold=True,
+                        align=WD_ALIGN_PARAGRAPH.CENTER)
+            _set_cell_borders(row.cells[0])
+            row.cells[0].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+            for ci, txt in enumerate([
                 ch,
                 f"{cal.excitation * 1000:.3g}",
                 f"{cal.gain:.6f}",
-                f"{cal.offset_100_v:.6f}",
-            ]
-            for i, txt in enumerate(cells):
-                _para(row.cells[i], txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-                if bg:
-                    _set_cell_bg(row.cells[i], bg)
+                f"{off_val:.6f}",
+            ], start=1):
+                _data_cell(row.cells[ci], txt, size=8,
+                           align=WD_ALIGN_PARAGRAPH.CENTER)
 
             for j, r in enumerate(rs):
-                dev = cal.dev_final_100.get(r)
-                tol = cal.tolerance_max_100.get(r, self.tolerance)
+                dev = dev_d.get(r)
+                tol = tol_d.get(r, self.tolerance)
                 txt = _fmt(dev, 4) if dev is not None else "-"
-                c = row.cells[4 + j]
-                _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
-                      color=_pass_color(dev, tol) if dev is not None else None)
-                if bg:
-                    _set_cell_bg(c, bg)
+                _data_cell(row.cells[5 + j], txt, size=8,
+                           align=WD_ALIGN_PARAGRAPH.CENTER,
+                           color=_pass_color(dev, tol) if dev is not None else None)
 
-        for r in tbl.rows:
-            for cell in r.cells:
-                _set_cell_border(cell)
+            ok = _is_pass(cal, rs, method)
+            _data_cell(row.cells[5 + n_rs],
+                       "PASS" if ok else "FAIL", size=8,
+                       align=WD_ALIGN_PARAGRAPH.CENTER,
+                       color=C_PASS if ok else C_FAIL)
+            _set_row_height_cm(row, 0.58)
 
-        # ── Method 2-2 summary ──
+        # ── Charts (side by side) ─────────────────────────────────────────────
         doc.add_paragraph()
-        h2 = doc.add_paragraph("2-2  Calibration Summary (Mean Offset Method)")
-        h2.runs[0].bold = True
-        h2.runs[0].font.size = Pt(11)
-        h2.runs[0].font.color.rgb = C_HEADER_BG
-
-        tbl2 = doc.add_table(rows=2 + len(self.channels), cols=n_cols)
-        tbl2.style = "Table Grid"
-        tbl2.autofit = False
-        for row in tbl2.rows:
-            for i, cell in enumerate(row.cells):
-                cell.width = _col_w[i]
-        row0b = tbl2.rows[0]
-        for i, label in enumerate(["채널", "Exc.(mA)", "G_cal", "V_offset(2-2)"]):
-            _header_cell(row0b.cells[i], label)
-        for j, r in enumerate(rs):
-            _header_cell(row0b.cells[4 + j], f"{r:.0f}Ω")
-        row1b = tbl2.rows[1]
-        for i, u in enumerate(["-", "mA", "-", "V"] + ["dev(Ω)"] * n_rs):
-            _header_cell(row1b.cells[i], u, size=7)
-
-        for ri, ch in enumerate(self.channels):
-            cal = self.calibrations[ch]
-            row = tbl2.rows[2 + ri]
-            bg = C_ROW_ALT if ri % 2 == 0 else None
-            cells = [ch, f"{cal.excitation * 1000:.3g}", f"{cal.gain:.6f}",
-                     f"{cal.offset_mean_v:.6f}"]
-            for i, txt in enumerate(cells):
-                _para(row.cells[i], txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-                if bg:
-                    _set_cell_bg(row.cells[i], bg)
-            for j, r in enumerate(rs):
-                dev = cal.dev_final_mean.get(r)
-                tol = cal.tolerance_max_mean.get(r, self.tolerance)
-                txt = _fmt(dev, 4) if dev is not None else "-"
-                c = row.cells[4 + j]
-                _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
-                      color=_pass_color(dev, tol) if dev is not None else None)
-                if bg:
-                    _set_cell_bg(c, bg)
-
-        for r in tbl2.rows:
-            for cell in r.cells:
-                _set_cell_border(cell)
-
-    # ── Per-channel detail page ──────────────────────────────────────────────
-
-    def _add_channel_page(self, doc: Document, ch_idx: int, ch: str):
-        doc.add_page_break()
-        cal = self.calibrations[ch]
-        rs = self.resistances
-
-        # ---- Page header ----
-        h = doc.add_paragraph()
-        h.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        run = h.add_run(f"Calibration Sheet ({ch_idx + 1}/{len(self.channels)})   —   {ch}")
-        run.bold = True
-        run.font.size = Pt(12)
-        run.font.color.rgb = C_HEADER_BG
-
-        # ---- Section 2-1 / 2-2 result banner ----
-        result_tbl = doc.add_table(rows=3, cols=11)
-        result_tbl.style = "Table Grid"
-
-        r0 = result_tbl.rows[0]
-        _header_cell(r0.cells[0], "")
-        _header_cell(r0.cells[1], "채널명")
-        _header_cell(r0.cells[2], "Exc.(mA)")
-        _header_cell(r0.cells[3], "G_cal")
-        _header_cell(r0.cells[4], "V_offset")
-        for j, r in enumerate(rs):
-            _header_cell(r0.cells[5 + j], f"{r:.0f}Ω")
-
-        # 2-1 row
-        r1 = result_tbl.rows[1]
-        _section_cell(r1.cells[0], "2-1\n(100Ω)")
-        _para(r1.cells[1], ch, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r1.cells[2], f"{cal.excitation * 1000:.3g}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r1.cells[3], f"{cal.gain:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r1.cells[4], f"{cal.offset_100_v:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        for j, r in enumerate(rs):
-            dev = cal.dev_final_100.get(r)
-            tol = cal.tolerance_max_100.get(r, self.tolerance)
-            txt = _fmt(dev, 4) if dev is not None else "-"
-            c = r1.cells[5 + j]
-            _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
-                  color=_pass_color(dev, tol) if dev is not None else None)
-
-        # 2-2 row
-        r2 = result_tbl.rows[2]
-        _section_cell(r2.cells[0], "2-2\n(Mean)")
-        _para(r2.cells[1], ch, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r2.cells[2], f"{cal.excitation * 1000:.3g}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r2.cells[3], f"{cal.gain:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r2.cells[4], f"{cal.offset_mean_v:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        for j, r in enumerate(rs):
-            dev = cal.dev_final_mean.get(r)
-            tol = cal.tolerance_max_mean.get(r, self.tolerance)
-            txt = _fmt(dev, 4) if dev is not None else "-"
-            c = r2.cells[5 + j]
-            _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
-                  color=_pass_color(dev, tol) if dev is not None else None)
-
-        for row in result_tbl.rows:
-            for cell in row.cells:
-                _set_cell_border(cell)
-
-        # ---- Charts (side by side) ----
-        doc.add_paragraph()
-        chart_para = doc.add_paragraph()
-        chart_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-        gain_chart   = _make_gain_chart(cal)
-        dev_chart    = _make_deviation_chart(cal, rs)
-
-        # We insert two charts into a 1-row 2-col table
         chart_tbl = doc.add_table(rows=1, cols=2)
         chart_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        chart_tbl.rows[0].cells[0].paragraphs[0].add_run().add_picture(gain_chart, width=Cm(8.5))
-        chart_tbl.rows[0].cells[1].paragraphs[0].add_run().add_picture(dev_chart,  width=Cm(8.5))
+        for ci, buf in enumerate([_make_gain_chart(cal),
+                                   _make_deviation_chart(cal, rs)]):
+            chart_tbl.rows[0].cells[ci].paragraphs[0].add_run(
+            ).add_picture(buf, width=Cm(8.8))
 
-        # ---- Detail statistics table ----
+        # ── Detail stats table ────────────────────────────────────────────────
         doc.add_paragraph()
-        h2 = doc.add_paragraph("상세 정보 (Detail)")
-        h2.runs[0].bold = True
-        h2.runs[0].font.size = Pt(10)
-        h2.runs[0].font.color.rgb = C_HEADER_BG
+        _section_header_para(doc, "Measurement Detail")
 
-        # All detail rows: decimal stats, voltages, resistance before/after gain, offsets
-        n_cols = 2 + len(rs)
-        dtbl = doc.add_table(rows=0, cols=n_cols)
-        dtbl.style = "Table Grid"
+        fixed_dt = 5.0
+        r_cm_dt  = round((CONTENT_W - fixed_dt) / max(n_rs, 1), 3)
+        col_w_dt = [Cm(2.6), Cm(2.4)] + [Cm(r_cm_dt)] * n_rs
+        n_dt     = 2 + n_rs
 
-        def _add_drow(label_main: str, label_sub: str, values: List, bold=False, bg=None):
+        dtbl = doc.add_table(rows=0, cols=n_dt)
+        dtbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        dtbl.autofit   = False
+
+        def _hrow():
             row = dtbl.add_row()
-            _para(row.cells[0], label_main, bold=bold, size=8)
-            _para(row.cells[1], label_sub, size=8)
-            if bg:
-                _set_cell_bg(row.cells[0], bg)
-                _set_cell_bg(row.cells[1], bg)
-            for j, val in enumerate(values):
-                txt = _fmt(val, 4) if isinstance(val, float) else str(val) if val is not None else "-"
-                _para(row.cells[2 + j], txt, size=8, align=WD_ALIGN_PARAGRAPH.RIGHT)
-                if bg:
-                    _set_cell_bg(row.cells[2 + j], bg)
+            _col_header_cell(row.cells[0], "Section", size=8,
+                             align=WD_ALIGN_PARAGRAPH.LEFT)
+            _col_header_cell(row.cells[1], "Item", size=8,
+                             align=WD_ALIGN_PARAGRAPH.LEFT)
+            for j, r in enumerate(rs):
+                _col_header_cell(row.cells[2 + j], f"{r:.0f} Ω", size=8)
+            for ci, cell in enumerate(row.cells):
+                cell.width = col_w_dt[ci]
+            _set_row_height_cm(row, 0.50)
 
-        # Header
-        hrow = dtbl.add_row()
-        _header_cell(hrow.cells[0], "구분")
-        _header_cell(hrow.cells[1], "항목")
-        for j, r in enumerate(rs):
-            _header_cell(hrow.cells[2 + j], f"{r:.0f}Ω")
+        def _drow(main: str, sub: str, vals: list,
+                  bg: Optional[RGBColor] = None):
+            row = dtbl.add_row()
+            _data_cell(row.cells[0], main, size=7.5, bold=(bg is not None),
+                       align=WD_ALIGN_PARAGRAPH.LEFT, bg=bg)
+            _data_cell(row.cells[1], sub,  size=7.5,
+                       align=WD_ALIGN_PARAGRAPH.LEFT, bg=bg)
+            for j, val in enumerate(vals):
+                txt = (_fmt(val, 4) if isinstance(val, float)
+                       else str(val) if val is not None else "-")
+                _data_cell(row.cells[2 + j], txt, size=7.5,
+                           align=WD_ALIGN_PARAGRAPH.RIGHT, bg=bg)
+            for ci, cell in enumerate(row.cells):
+                cell.width = col_w_dt[ci]
+            _set_row_height_cm(row, 0.48)
 
-        # Decimal
-        _add_drow("1) Decimal", "AVG", [int(cal.decimals_avg.get(r, 0)) for r in rs], bg=C_SECTION_BG)
-        _add_drow("",           "MIN", [int(cal.decimals_min.get(r, 0)) for r in rs])
-        _add_drow("",           "MAX", [int(cal.decimals_max.get(r, 0)) for r in rs])
+        def _srow(main: str, detail: str,
+                  bg: Optional[RGBColor] = None):
+            """Row whose value spans all right columns."""
+            row = dtbl.add_row()
+            _data_cell(row.cells[0], main, size=7.5, bold=True,
+                       align=WD_ALIGN_PARAGRAPH.LEFT, bg=bg)
+            row.cells[0].width = col_w_dt[0]
+            merged = row.cells[1]
+            for k in range(2, n_dt):
+                merged = merged.merge(row.cells[k])
+            _data_cell(merged, detail, size=7.5,
+                       align=WD_ALIGN_PARAGRAPH.LEFT, bg=bg)
+            _set_row_height_cm(row, 0.48)
 
-        # Voltage before gain
-        _add_drow("2) 전압(before gain)", "Ref", [cal.voltage_ref.get(r) for r in rs], bg=C_SECTION_BG)
-        _add_drow("",                      "AVG", [cal.voltages_avg.get(r) for r in rs])
+        _hrow()
+        _drow("1) Decimal",
+              "AVG", [int(cal.decimals_avg.get(r, 0)) for r in rs],
+              bg=C_THEAD_BG)
+        _drow("", "MIN", [int(cal.decimals_min.get(r, 0)) for r in rs])
+        _drow("", "MAX", [int(cal.decimals_max.get(r, 0)) for r in rs])
 
-        # Resistance before gain
-        _add_drow("3) 저항(before gain)", "Ref",    [r for r in rs], bg=C_SECTION_BG)
-        _add_drow("",                      "AVG",    [cal.r_before_gain.get(r) for r in rs])
-        _add_drow("",                      "편차",   [cal.dev_before_gain.get(r) for r in rs])
+        _drow("2) Voltage (before gain)",
+              "Ref", [cal.voltage_ref.get(r) for r in rs], bg=C_THEAD_BG)
+        _drow("", "AVG", [cal.voltages_avg.get(r) for r in rs])
 
-        # Gain value (G_cal)
-        grow = dtbl.add_row()
-        _para(grow.cells[0], "4) G_cal", bold=True, size=8)
-        _para(grow.cells[1], f"{cal.gain:.8f}", size=8)
-        _set_cell_bg(grow.cells[0], C_SECTION_BG)
-        _set_cell_bg(grow.cells[1], C_SECTION_BG)
-        for j in range(len(rs)):
-            _set_cell_bg(grow.cells[2 + j], C_SECTION_BG)
+        _drow("3) Resistance (before gain)",
+              "Ref", [r for r in rs], bg=C_THEAD_BG)
+        _drow("", "AVG", [cal.r_before_gain.get(r)   for r in rs])
+        _drow("", "Dev", [cal.dev_before_gain.get(r) for r in rs])
 
-        # Resistance after gain
-        _add_drow("5) 저항(after gain)",  "AVG",  [cal.r_after_gain_avg.get(r) for r in rs], bg=C_SECTION_BG)
-        _add_drow("",                      "MIN",  [cal.r_after_gain_min.get(r) for r in rs])
-        _add_drow("",                      "MAX",  [cal.r_after_gain_max.get(r) for r in rs])
-        _add_drow("",                      "편차", [cal.dev_after_gain.get(r) for r in rs])
+        _srow("4) G_cal", f"{cal.gain:.8f}", bg=C_THEAD_BG)
 
-        # V_offset
-        orow = dtbl.add_row()
-        _para(orow.cells[0], "6) V_offset", bold=True, size=8)
-        _para(orow.cells[1], f"2-1: {cal.offset_100_v:.6f} V  /  2-2: {cal.offset_mean_v:.6f} V", size=8)
-        _set_cell_bg(orow.cells[0], C_SECTION_BG)
-        _set_cell_bg(orow.cells[1], C_SECTION_BG)
-        for j in range(len(rs)):
-            _set_cell_bg(orow.cells[2 + j], C_SECTION_BG)
+        _drow("5) Resistance (after gain)",
+              "AVG", [cal.r_after_gain_avg.get(r) for r in rs], bg=C_THEAD_BG)
+        _drow("", "MIN", [cal.r_after_gain_min.get(r) for r in rs])
+        _drow("", "MAX", [cal.r_after_gain_max.get(r) for r in rs])
+        _drow("", "Dev", [cal.dev_after_gain.get(r)   for r in rs])
 
-        # Method 2-1 final
-        _add_drow("7) 2-1 최종(100Ω offset)", "AVG",    [cal.r_final_100_avg.get(r) for r in rs], bg=C_SECTION_BG)
-        _add_drow("",                          "편차",   [cal.dev_final_100.get(r) for r in rs])
-        _add_drow("",                          "허용(+)", [cal.tolerance_max_100.get(r) for r in rs])
-        _add_drow("",                          "허용(-)", [cal.tolerance_min_100.get(r) for r in rs])
+        _srow("6) V_offset",
+              f"2-1: {cal.offset_100_v:.6f} V    /    "
+              f"2-2: {cal.offset_mean_v:.6f} V",
+              bg=C_THEAD_BG)
 
-        # Method 2-2 final
-        _add_drow("8) 2-2 최종(Mean offset)",  "AVG",    [cal.r_final_mean_avg.get(r) for r in rs], bg=C_SECTION_BG)
-        _add_drow("",                          "편차",   [cal.dev_final_mean.get(r) for r in rs])
-        _add_drow("",                          "허용(+)", [cal.tolerance_max_mean.get(r) for r in rs])
-        _add_drow("",                          "허용(-)", [cal.tolerance_min_mean.get(r) for r in rs])
+        _drow("7) Final 2-1 (100Ω offset)",
+              "AVG",    [cal.r_final_100_avg.get(r) for r in rs],
+              bg=C_THEAD_BG)
+        _drow("", "Dev",   [cal.dev_final_100.get(r)     for r in rs])
+        _drow("", "Tol(+)", [cal.tolerance_max_100.get(r) for r in rs])
+        _drow("", "Tol(−)", [cal.tolerance_min_100.get(r) for r in rs])
 
-        for row in dtbl.rows:
-            for cell in row.cells:
-                _set_cell_border(cell)
+        _drow("8) Final 2-2 (Mean offset)",
+              "AVG",    [cal.r_final_mean_avg.get(r) for r in rs],
+              bg=C_THEAD_BG)
+        _drow("", "Dev",   [cal.dev_final_mean.get(r)     for r in rs])
+        _drow("", "Tol(+)", [cal.tolerance_max_mean.get(r) for r in rs])
+        _drow("", "Tol(−)", [cal.tolerance_min_mean.get(r) for r in rs])
 
-    # ── Public API ───────────────────────────────────────────────────────────
+    # ── Public API ────────────────────────────────────────────────────────────
 
-    def write(self, output_path: str):
-        """Generate the full calibration DOCX report and save to output_path."""
+    def write(self, output_path: str) -> str:
+        """
+        Generate the full calibration DOCX report.
+
+        Workflow:
+          1. Open template (preserves header, logo, fonts, page setup, footer)
+          2. Replace info field values in rows 0-11
+          3. Remove rows 12+ (Device information section and below)
+          4. Append calibration sections (setup, summary, per-channel pages)
+        """
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        doc = Document()
-        self._page_setup(doc)
 
-        # Remove default empty paragraph
-        for para in doc.paragraphs:
-            p = para._element
-            p.getparent().remove(p)
+        # ── Load template ──────────────────────────────────────────────────
+        doc = Document(TEMPLATE_PATH)
+        tbl = doc.tables[0]   # the single master table in the template
 
-        self._add_cover(doc)
+        # ── Update info fields ─────────────────────────────────────────────
+        self._update_template_fields(tbl)
+
+        # ── Remove Device information and below (rows 12+) ─────────────────
+        self._trim_table(tbl, keep_rows=12)
+
+        # ── Append calibration content ─────────────────────────────────────
+        self._add_setup_section(doc)
         self._add_summary(doc)
 
         for idx, ch in enumerate(self.channels):
