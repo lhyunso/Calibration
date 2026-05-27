@@ -55,7 +55,7 @@ class Strain350Config(SensorConfig):
             name="Strain Gauge 350Ω",
             sensor_type="strain350",
             r_nominal=350.0,
-            excitation=0.001,      # 1 mA 정전류 여기
+            excitation=0.010,      # 10 mA 정전류 여기
             inst_amp_gain=100.0,   # 기본 Inst. Amp 게인 (Strain ×100)
             tolerance_ohm=1.35,
             default_resistances=[320.0, 330.0, 340.0, 350.0, 360.0, 370.0, 380.0],

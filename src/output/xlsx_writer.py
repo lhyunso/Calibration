@@ -386,9 +386,9 @@ class CalibrationXlsxWriter:
 
         # Header row 2 (units)
         _hdr(ws, r, 1, "-", size=7)
-        _hdr(ws, r, 2, "V/Ω", size=7)
+        _hdr(ws, r, 2, "mA", size=7)
         _hdr(ws, r, 3, "-", size=7)
-        _hdr(ws, r, 4, "Ω", size=7)
+        _hdr(ws, r, 4, "V", size=7)
         for j in range(n_rs):
             _hdr(ws, r, 5 + j, "Ω", size=7)
         _hdr(ws, r, 5 + n_rs, "-", size=7)
@@ -410,16 +410,16 @@ class CalibrationXlsxWriter:
                     c.fill = alt
 
             if method == "2-1":
-                offset = cal.offset_100
-                devs   = {res: cal.dev_final_100.get(res) for res in rs}
+                offset_v = cal.offset_100_v
+                devs     = {res: cal.dev_final_100.get(res) for res in rs}
             else:
-                offset = cal.offset_mean
-                devs   = {res: cal.dev_final_mean.get(res) for res in rs}
+                offset_v = cal.offset_mean_v
+                devs     = {res: cal.dev_final_mean.get(res) for res in rs}
 
             _dv(1, ch)
-            _dv(2, cal.excitation, "0.0000")
-            _dv(3, cal.gain,       "0.000000")
-            _dv(4, offset,         "0.000000")
+            _dv(2, cal.excitation * 1000, "0.000")   # A → mA
+            _dv(3, cal.gain,              "0.000000")
+            _dv(4, offset_v,              "0.000000")
 
             pass_all = True
             for j, res in enumerate(rs):
@@ -477,33 +477,29 @@ class CalibrationXlsxWriter:
         _hdr(ws, r, COL_SEC,  "구분")
         _hdr(ws, r, COL_ITEM, "채널명")
         # Will add more header cols below; using inline approach
-        hcols = ["Excitation(mA)", "Gain(측정)", "Gain(이론)", "Gain편차(%)", "Offset"] + \
+        hcols = ["Excitation(mA)", "G_cal", "V_offset"] + \
                 [f"{x:.0f}Ω" for x in rs]
         for j, txt in enumerate(hcols):
             _hdr(ws, r, COL_RES + j, txt)
         r += 1
 
-        def _res_row(label, offset_val, devs_dict):
-            gain_dev = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
-                        if cal.gain_theoretical else 0.0)
+        def _res_row(label, offset_v_val, devs_dict):
             _sec(ws, r, COL_SEC, label)
             _val(ws, r, COL_ITEM, ch)
             _val(ws, r, COL_RES,     cal.excitation * 1000, "0.000")   # mA
             _val(ws, r, COL_RES + 1, cal.gain,              "0.000000")
-            _val(ws, r, COL_RES + 2, cal.gain_theoretical,  "0.000000")
-            _val(ws, r, COL_RES + 3, gain_dev,              "+0.000")
-            _val(ws, r, COL_RES + 4, offset_val,            "0.000000")
+            _val(ws, r, COL_RES + 2, offset_v_val,          "0.000000")
             for j, res in enumerate(rs):
                 dev = devs_dict.get(res)
                 if dev is None:
-                    _val(ws, r, COL_RES + 5 + j, "-")
+                    _val(ws, r, COL_RES + 3 + j, "-")
                 else:
-                    _val(ws, r, COL_RES + 5 + j, dev, "0.0000",
+                    _val(ws, r, COL_RES + 3 + j, dev, "0.0000",
                          color=_pass_color(dev, tol))
 
-        _res_row("2-1  (R_nom offset)", cal.offset_100,  cal.dev_final_100)
+        _res_row("2-1  (R_nom offset)", cal.offset_100_v,  cal.dev_final_100)
         r += 1
-        _res_row("2-2  (Mean offset)",  cal.offset_mean, cal.dev_final_mean)
+        _res_row("2-2  (Mean offset)",  cal.offset_mean_v, cal.dev_final_mean)
         r += 1
 
         # ── Charts ───────────────────────────────────────────────────────────
@@ -605,22 +601,15 @@ class CalibrationXlsxWriter:
               [cal.dev_before_gain.get(x) for x in rs], alt=True)
         r += 1
 
-        # 4) Gain (측정값 + 이론값 + 편차)
-        gain_dev_pct = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
-                        if cal.gain_theoretical else 0.0)
+        # 4) G_cal
         for label, val in [
-            ("4) Gain (측정)",  f"{cal.gain:.8f}"),
-            ("   Gain (이론)",  f"{cal.gain_theoretical:.6f}  "
-                                f"= {self.sensor.excitation*1000:.2g}mA × "
-                                f"{self.sensor.r_nominal:.0f}Ω × "
-                                f"{self.sensor.inst_amp_gain:.0f}"),
-            ("   Gain 편차",    f"{gain_dev_pct:+.3f}%"),
+            ("4) G_cal",  f"{cal.gain:.8f}"),
         ]:
             gc = ws.cell(row=r, column=COL_SEC,  value=label)
             gv = ws.cell(row=r, column=COL_ITEM, value=val)
             for c in (gc, gv):
                 c.fill      = _fill(C_LBLUE)
-                c.font      = _font(bold=("측정" in label), size=8)
+                c.font      = _font(bold=True, size=8)
                 c.alignment = _align(h="left")
                 c.border    = _thin_border()
             ws.merge_cells(start_row=r, start_column=COL_RES,
@@ -643,9 +632,9 @@ class CalibrationXlsxWriter:
         r += 1
 
         # 6) Offsets
-        oc = ws.cell(row=r, column=COL_SEC,  value="6) Offset")
+        oc = ws.cell(row=r, column=COL_SEC,  value="6) V_offset")
         ov = ws.cell(row=r, column=COL_ITEM,
-                     value=f"2-1: {cal.offset_100:.6f}  /  2-2: {cal.offset_mean:.6f}")
+                     value=f"2-1: {cal.offset_100_v:.6f}  /  2-2: {cal.offset_mean_v:.6f}")
         for c in (oc, ov):
             c.fill      = _fill(C_LBLUE)
             c.font      = _font(bold=True, size=8)

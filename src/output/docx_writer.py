@@ -321,27 +321,27 @@ class CalibrationDocxWriter:
 
         rs = self.resistances
         n_rs = len(rs)
-        # cols: Channel | Excitation | Gain(측정) | Gain(이론) | Gain편차 | Offset | dev×n
-        n_cols = 6 + n_rs
+        # cols: Channel | Excitation | G_cal | V_offset | dev×n
+        n_cols = 4 + n_rs
         tbl = doc.add_table(rows=2 + len(self.channels), cols=n_cols)
         tbl.style = "Table Grid"
         tbl.autofit = False
-        _col_w = [Cm(2.0), Cm(1.6), Cm(2.2), Cm(2.2), Cm(1.6), Cm(2.0)] + \
-                 [Cm(max(1.2, (17.0 - 11.6) / n_rs))] * n_rs
+        _col_w = [Cm(2.0), Cm(1.6), Cm(2.8), Cm(2.8)] + \
+                 [Cm(max(1.2, (17.0 - 9.2) / n_rs))] * n_rs
         for row in tbl.rows:
             for i, cell in enumerate(row.cells):
                 cell.width = _col_w[i]
 
         # Header row 1
         row0 = tbl.rows[0]
-        for i, label in enumerate(["채널", "Exc.(mA)", "Gain(측정)", "Gain(이론)", "Gain편차", "Offset(R_nom)"]):
+        for i, label in enumerate(["채널", "Exc.(mA)", "G_cal", "V_offset(2-1)"]):
             _header_cell(row0.cells[i], label)
         for j, r in enumerate(rs):
-            _header_cell(row0.cells[6 + j], f"{r:.0f}Ω")
+            _header_cell(row0.cells[4 + j], f"{r:.0f}Ω")
 
         # Header row 2: units
         row1 = tbl.rows[1]
-        for i, u in enumerate(["-", "mA", "-", "-", "%", "Ω"] + ["dev(Ω)"] * n_rs):
+        for i, u in enumerate(["-", "mA", "-", "V"] + ["dev(Ω)"] * n_rs):
             _header_cell(row1.cells[i], u, size=7)
 
         # Data rows
@@ -349,16 +349,12 @@ class CalibrationDocxWriter:
             cal = self.calibrations[ch]
             row = tbl.rows[2 + ri]
             bg = C_ROW_ALT if ri % 2 == 0 else None
-            gain_dev = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
-                        if cal.gain_theoretical else 0.0)
 
             cells = [
                 ch,
                 f"{cal.excitation * 1000:.3g}",
                 f"{cal.gain:.6f}",
-                f"{cal.gain_theoretical:.6f}",
-                f"{gain_dev:+.3f}%",
-                f"{cal.offset_100:.6f}",
+                f"{cal.offset_100_v:.6f}",
             ]
             for i, txt in enumerate(cells):
                 _para(row.cells[i], txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
@@ -369,7 +365,7 @@ class CalibrationDocxWriter:
                 dev = cal.dev_final_100.get(r)
                 tol = cal.tolerance_max_100.get(r, self.sensor.tolerance_ohm)
                 txt = _fmt(dev, 4) if dev is not None else "-"
-                c = row.cells[6 + j]
+                c = row.cells[4 + j]
                 _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
                       color=_pass_color(dev, tol) if dev is not None else None)
                 if bg:
@@ -393,22 +389,20 @@ class CalibrationDocxWriter:
             for i, cell in enumerate(row.cells):
                 cell.width = _col_w[i]
         row0b = tbl2.rows[0]
-        for i, label in enumerate(["채널", "Exc.(mA)", "Gain(측정)", "Gain(이론)", "Gain편차", "Offset(Mean)"]):
+        for i, label in enumerate(["채널", "Exc.(mA)", "G_cal", "V_offset(2-2)"]):
             _header_cell(row0b.cells[i], label)
         for j, r in enumerate(rs):
-            _header_cell(row0b.cells[6 + j], f"{r:.0f}Ω")
+            _header_cell(row0b.cells[4 + j], f"{r:.0f}Ω")
         row1b = tbl2.rows[1]
-        for i, u in enumerate(["-", "mA", "-", "-", "%", "Ω"] + ["dev(Ω)"] * n_rs):
+        for i, u in enumerate(["-", "mA", "-", "V"] + ["dev(Ω)"] * n_rs):
             _header_cell(row1b.cells[i], u, size=7)
 
         for ri, ch in enumerate(self.channels):
             cal = self.calibrations[ch]
             row = tbl2.rows[2 + ri]
             bg = C_ROW_ALT if ri % 2 == 0 else None
-            gain_dev = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
-                        if cal.gain_theoretical else 0.0)
             cells = [ch, f"{cal.excitation * 1000:.3g}", f"{cal.gain:.6f}",
-                     f"{cal.gain_theoretical:.6f}", f"{gain_dev:+.3f}%", f"{cal.offset_mean:.6f}"]
+                     f"{cal.offset_mean_v:.6f}"]
             for i, txt in enumerate(cells):
                 _para(row.cells[i], txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
                 if bg:
@@ -417,7 +411,7 @@ class CalibrationDocxWriter:
                 dev = cal.dev_final_mean.get(r)
                 tol = cal.tolerance_max_mean.get(r, self.sensor.tolerance_ohm)
                 txt = _fmt(dev, 4) if dev is not None else "-"
-                c = row.cells[6 + j]
+                c = row.cells[4 + j]
                 _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
                       color=_pass_color(dev, tol) if dev is not None else None)
                 if bg:
@@ -449,9 +443,9 @@ class CalibrationDocxWriter:
         r0 = result_tbl.rows[0]
         _header_cell(r0.cells[0], "")
         _header_cell(r0.cells[1], "채널명")
-        _header_cell(r0.cells[2], "Excitation")
-        _header_cell(r0.cells[3], "Gain")
-        _header_cell(r0.cells[4], "Offset")
+        _header_cell(r0.cells[2], "Exc.(mA)")
+        _header_cell(r0.cells[3], "G_cal")
+        _header_cell(r0.cells[4], "V_offset")
         for j, r in enumerate(rs):
             _header_cell(r0.cells[5 + j], f"{r:.0f}Ω")
 
@@ -459,9 +453,9 @@ class CalibrationDocxWriter:
         r1 = result_tbl.rows[1]
         _section_cell(r1.cells[0], "2-1\n(100Ω)")
         _para(r1.cells[1], ch, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r1.cells[2], f"{cal.excitation:.4f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _para(r1.cells[2], f"{cal.excitation * 1000:.3g}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
         _para(r1.cells[3], f"{cal.gain:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r1.cells[4], f"{cal.offset_100:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _para(r1.cells[4], f"{cal.offset_100_v:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
         for j, r in enumerate(rs):
             dev = cal.dev_final_100.get(r)
             tol = cal.tolerance_max_100.get(r, self.sensor.tolerance_ohm)
@@ -474,9 +468,9 @@ class CalibrationDocxWriter:
         r2 = result_tbl.rows[2]
         _section_cell(r2.cells[0], "2-2\n(Mean)")
         _para(r2.cells[1], ch, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r2.cells[2], f"{cal.excitation:.4f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _para(r2.cells[2], f"{cal.excitation * 1000:.3g}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
         _para(r2.cells[3], f"{cal.gain:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _para(r2.cells[4], f"{cal.offset_mean:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _para(r2.cells[4], f"{cal.offset_mean_v:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
         for j, r in enumerate(rs):
             dev = cal.dev_final_mean.get(r)
             tol = cal.tolerance_max_mean.get(r, self.sensor.tolerance_ohm)
@@ -549,21 +543,14 @@ class CalibrationDocxWriter:
         _add_drow("",                      "AVG",    [cal.r_before_gain.get(r) for r in rs])
         _add_drow("",                      "편차",   [cal.dev_before_gain.get(r) for r in rs])
 
-        # Gain value (측정 / 이론 / 편차)
-        gain_dev_pct = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
-                        if cal.gain_theoretical else 0.0)
-        for glabel, gval in [
-            ("4) Gain (측정)",  f"{cal.gain:.8f}"),
-            ("   Gain (이론)",  f"{cal.gain_theoretical:.6f}"),
-            ("   Gain 편차",    f"{gain_dev_pct:+.3f}%"),
-        ]:
-            grow = dtbl.add_row()
-            _para(grow.cells[0], glabel, bold=("측정" in glabel), size=8)
-            _para(grow.cells[1], gval, size=8)
-            _set_cell_bg(grow.cells[0], C_SECTION_BG)
-            _set_cell_bg(grow.cells[1], C_SECTION_BG)
-            for j in range(len(rs)):
-                _set_cell_bg(grow.cells[2 + j], C_SECTION_BG)
+        # Gain value (G_cal)
+        grow = dtbl.add_row()
+        _para(grow.cells[0], "4) G_cal", bold=True, size=8)
+        _para(grow.cells[1], f"{cal.gain:.8f}", size=8)
+        _set_cell_bg(grow.cells[0], C_SECTION_BG)
+        _set_cell_bg(grow.cells[1], C_SECTION_BG)
+        for j in range(len(rs)):
+            _set_cell_bg(grow.cells[2 + j], C_SECTION_BG)
 
         # Resistance after gain
         _add_drow("5) 저항(after gain)",  "AVG",  [cal.r_after_gain_avg.get(r) for r in rs], bg=C_SECTION_BG)
@@ -571,10 +558,10 @@ class CalibrationDocxWriter:
         _add_drow("",                      "MAX",  [cal.r_after_gain_max.get(r) for r in rs])
         _add_drow("",                      "편차", [cal.dev_after_gain.get(r) for r in rs])
 
-        # Offsets
+        # V_offset
         orow = dtbl.add_row()
-        _para(orow.cells[0], "6) Offset", bold=True, size=8)
-        _para(orow.cells[1], f"100Ω: {cal.offset_100:.6f}  /  Mean: {cal.offset_mean:.6f}", size=8)
+        _para(orow.cells[0], "6) V_offset", bold=True, size=8)
+        _para(orow.cells[1], f"2-1: {cal.offset_100_v:.6f} V  /  2-2: {cal.offset_mean_v:.6f} V", size=8)
         _set_cell_bg(orow.cells[0], C_SECTION_BG)
         _set_cell_bg(orow.cells[1], C_SECTION_BG)
         for j in range(len(rs)):
