@@ -388,30 +388,26 @@ class CalibrationTab(ctk.CTkFrame):
         rs     = sorted(next(iter(cals.values())).voltages_avg.keys())
 
         for attr, dev_k, off_k in [
-            ("tv_21", "dev_final_100",  "offset_100"),
-            ("tv_22", "dev_final_mean", "offset_mean"),
+            ("tv_21", "dev_final_100",  "offset_100_v"),
+            ("tv_22", "dev_final_mean", "offset_mean_v"),
         ]:
             tv = getattr(self, attr)
             tv.delete(*tv.get_children())
-            new_cols = ("채널", "Gain(측정)", "Gain(이론)", "Gain편차", "Offset") + \
+            new_cols = ("채널", "G_cal", "V_offset") + \
                        tuple(f"{int(r)}Ω" for r in rs) + ("판정",)
             tv["columns"] = new_cols
             for c in new_cols:
                 tv.heading(c, text=c)
-                tv.column(c, width=72, anchor="center")
+                tv.column(c, width=80, anchor="center")
             tv.column("채널", width=55)
 
             for ch, cal in sorted(cals.items()):
-                off      = getattr(cal, off_k)
-                devs     = getattr(cal, dev_k)
-                ok       = all(abs(devs.get(r, 0)) <= sensor.tolerance_ohm for r in rs)
-                gain_dev = ((cal.gain - cal.gain_theoretical) / cal.gain_theoretical * 100
-                            if cal.gain_theoretical else 0.0)
+                off  = getattr(cal, off_k)
+                devs = getattr(cal, dev_k)
+                ok   = all(abs(devs.get(r, 0)) <= sensor.tolerance_ohm for r in rs)
                 tv.insert("", "end", tags=("pass" if ok else "fail",), values=(
                     ch,
                     f"{cal.gain:.6f}",
-                    f"{cal.gain_theoretical:.6f}",
-                    f"{gain_dev:+.3f}%",
                     f"{off:.6f}",
                     *[f"{devs.get(r, 0):.4f}" for r in rs],
                     "PASS" if ok else "FAIL",
@@ -478,8 +474,8 @@ class CalibrationTab(ctk.CTkFrame):
         _r("",                   "MAX",    [cal.r_after_gain_max.get(r) for r in rs])
         _r("",                   "편차",   [cal.dev_after_gain.get(r) for r in rs])
         self.detail_tv.insert("", "end",
-            values=("Offset",
-                    f"2-1: {cal.offset_100:.6f}  /  2-2: {cal.offset_mean:.6f}",
+            values=("V_offset",
+                    f"2-1: {cal.offset_100_v:.6f} V  /  2-2: {cal.offset_mean_v:.6f} V",
                     *[""] * len(rs)))
         _r("2-1 최종 (R_nom)",   "편차",   [cal.dev_final_100.get(r) for r in rs])
         _r("",                   "허용(+)",[cal.tolerance_max_100.get(r) for r in rs])

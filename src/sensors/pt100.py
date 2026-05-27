@@ -18,12 +18,9 @@ class PT100Config(SensorConfig):
             tolerance_ohm=0.385,
             default_resistances=[80.0, 90.0, 100.0, 110.0, 120.0],
             description="PT100 RTD, 3-wire, quarter bridge",
-            ref_formula="V = (R - 100) / 200 × Gain",
+            ref_formula="V = I_exc × ΔR × Gain / 2  (I_exc=1mA)",
         )
-
-    def ref_voltage(self, r: float, gain: float = 1.0) -> float:
-        """Reference voltage for PT100: V = (R - 100) / 200 * gain"""
-        return (r - self.r_nominal) / (2 * self.r_nominal) * gain
+    # ref_voltage / resistance_from_voltage → SensorConfig 기본 공식 사용
 
 
 class PT1000Config(SensorConfig):
@@ -38,18 +35,13 @@ class PT1000Config(SensorConfig):
             tolerance_ohm=3.85,
             default_resistances=[800.0, 900.0, 1000.0, 1100.0, 1200.0],
             description="PT1000 RTD, 3-wire, quarter bridge",
-            ref_formula="V = (R - 1000) / 2000 × Gain",
+            ref_formula="V = I_exc × ΔR × Gain / 2  (I_exc=0.1mA)",
         )
-
-    def ref_voltage(self, r: float, gain: float = 1.0) -> float:
-        return (r - self.r_nominal) / (2 * self.r_nominal) * gain
+    # ref_voltage / resistance_from_voltage → SensorConfig 기본 공식 사용
 
 
 class Strain350Config(SensorConfig):
-    """350Ω Strain Gauge quarter bridge — 정전류 여기 방식.
-    하드웨어가 PT100/PT1000과 동일한 정전류 회로이므로 공식도 동일:
-      V_ref = (R − R_nom) / (2 × R_nom) × inst_amp_gain
-    """
+    """350Ω Strain Gauge quarter bridge — 정전류 여기 방식."""
     def __init__(self):
         super().__init__(
             name="Strain Gauge 350Ω",
@@ -60,14 +52,9 @@ class Strain350Config(SensorConfig):
             tolerance_ohm=1.35,
             default_resistances=[320.0, 330.0, 340.0, 350.0, 360.0, 370.0, 380.0],
             description="350Ω Strain Gauge, 3-wire, 정전류 여기",
-            ref_formula="V = (R − 350) / 700 × Gain",
+            ref_formula="V = I_exc × ΔR × Gain / 2  (I_exc=10mA)",
         )
-
-    def ref_voltage(self, r: float, gain: float = 1.0) -> float:
-        """정전류 방식 기준전압 — PT100/PT1000과 동일 공식
-        V_ref = (R − R_nom) / (2 × R_nom) × gain
-        """
-        return (r - self.r_nominal) / (2 * self.r_nominal) * gain
+    # ref_voltage / resistance_from_voltage → SensorConfig 기본 공식 사용
 
 
 # Registry: sensor_type key → config instance
