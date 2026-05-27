@@ -50,7 +50,7 @@ class Strain350Config(SensorConfig):
             excitation=0.010,      # 10 mA 정전류 여기
             inst_amp_gain=100.0,   # 기본 Inst. Amp 게인 (Strain ×100)
             tolerance_ohm=1.35,
-            default_resistances=[320.0, 330.0, 340.0, 350.0, 360.0, 370.0, 380.0],
+            default_resistances=[330.0, 340.0, 350.0, 360.0, 370.0],
             description="350Ω Strain Gauge, 3-wire, 정전류 여기",
             ref_formula="V = I_exc × ΔR × Gain / 2  (I_exc=10mA)",
         )
