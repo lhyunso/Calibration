@@ -3,7 +3,7 @@
 :: MCAL Windows Build Script
 :: Python 3.11 및 pip 필요 (https://www.python.org/downloads/)
 :: 실행: build_windows.bat
-:: 결과: dist\MCAL\MCAL.exe
+:: 결과: dist\MCAL.exe (단일 파일)
 :: ============================================================
 
 :: Python 3.11 버전 확인
@@ -36,7 +36,8 @@ if errorlevel 1 (
 )
 
 echo [4/4] 완료!
-echo 실행 파일 위치: dist\MCAL\MCAL.exe
+echo 실행 파일 위치: dist\MCAL.exe
 echo.
-echo 배포 시 dist\MCAL\ 폴더 전체를 전달하세요.
+echo 배포 시 dist\MCAL.exe 단일 파일만 전달하세요.
+echo (첫 실행 시 5~10초 소요 — 내장 파일 압축 해제 중)
 pause

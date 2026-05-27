@@ -28,16 +28,11 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller MCAL.spec --clean --noconfirm
 
-      - name: Zip artifact
-        run: |
-          Compress-Archive -Path dist\MCAL\* -DestinationPath MCAL_windows.zip
-        shell: pwsh
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: MCAL_windows
-          path: MCAL_windows.zip
+          path: dist\MCAL.exe   # onefile: 단일 파일
           retention-days: 30
 
       # 태그 push일 때는 GitHub Release에도 자동 첨부
@@ -45,5 +40,5 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: MCAL_windows.zip
+          files: dist\MCAL.exe
           generate_release_notes: true
