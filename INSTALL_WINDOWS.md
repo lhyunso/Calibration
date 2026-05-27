@@ -35,22 +35,15 @@
 
 1. GitHub 저장소 접속: [https://github.com/lhyunso/Calibration](https://github.com/lhyunso/Calibration)
 2. 우측 **Releases** 섹션 클릭
-3. 최신 릴리즈의 **`MCAL_windows.zip`** 클릭하여 다운로드
+3. 최신 릴리즈의 **`MCAL.exe`** 클릭하여 다운로드
 
 > 릴리즈가 없는 경우 **Actions** 탭 → 최신 워크플로우 실행 → **Artifacts** 섹션에서 `MCAL_windows` 다운로드
 
 ### 2-2. 설치
 
-1. 다운로드한 `MCAL_windows.zip` 압축 해제
-2. 생성된 **`MCAL`** 폴더를 원하는 위치에 복사 (예: `C:\Program Files\MCAL\`)
+별도 설치 과정 없습니다. `MCAL.exe` 파일 하나만 원하는 위치에 저장 후 실행합니다.
 
-```
-MCAL\
-  MCAL.exe          ← 실행 파일
-  _internal\        ← 런타임 라이브러리 (삭제 금지)
-```
-
-3. `MCAL.exe` 더블클릭으로 실행
+> **첫 실행 시 5~10초 소요됩니다** — 내장된 런타임을 임시 폴더에 압축 해제하는 과정이며, 이후 실행은 빨라집니다.
 
 > **Windows 보안 경고가 뜨는 경우:**
 > `추가 정보` → `실행` 클릭 (개발자 서명이 없는 경우 표시될 수 있습니다)
@@ -166,12 +159,11 @@ ANA.BRI.Q100_Calibration data_120.csv
 
 ## 5. 폴더 구조
 
-실행 파일 방식으로 사용하는 경우, MCAL.exe와 같은 위치에 아래 폴더가 자동 생성됩니다.
+`MCAL.exe` 실행 시 같은 위치에 아래 항목이 자동 생성됩니다.
 
 ```
-MCAL\
-  MCAL.exe
-  _internal\
+(원하는 위치)\
+  MCAL.exe           ← 단일 실행 파일 (이것만 배포)
   outputs\           ← 출력 파일 저장 위치 (자동 생성)
     xlsx\
     docx\

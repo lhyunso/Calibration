@@ -73,8 +73,11 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,             # onefile: 바이너리 내장
+    a.zipfiles,             # onefile: zip 데이터 내장
+    a.datas,                # onefile: 데이터 파일 내장
     [],
-    exclude_binaries=True,
+    exclude_binaries=False, # onefile 모드
     name="MCAL",
     debug=False,
     bootloader_ignore_signals=False,
@@ -87,14 +90,4 @@ exe = EXE(
     entitlements_file=None,
     # icon="assets/icon.ico",  # 아이콘 파일이 있으면 주석 해제
 )
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name="MCAL",            # dist/MCAL/ 폴더에 출력
-)
+# onefile 모드: COLLECT 블록 없음 → dist/MCAL.exe 단일 파일 생성
