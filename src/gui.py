@@ -37,6 +37,16 @@ from reference.three_wire import (
     find_resistance_from_voltage, _SENSOR_RANGES,
 )
 
+# ── 버전 정보 ──────────────────────────────────────────────────────────────────
+APP_VERSION   = "1.0.4"
+APP_DATE      = "2026-05-27"
+APP_COPYRIGHT = "© 2026 DANAM Systems Inc."
+APP_DESC      = (
+    "Multi-Channel Sensor Calibration Tool\n"
+    "ANA.BRI.Q100 | PT100 / PT1000 / Strain 350Ω\n"
+    "CH01 ~ CH16 동시 캘리브레이션"
+)
+
 # ── 상수 ──────────────────────────────────────────────────────────────────────
 # PyInstaller 번들(.exe) 안에서는 실행 파일 옆에 settings.json을 저장
 def _exe_dir() -> str:
@@ -949,6 +959,73 @@ class SettingsTab(ctk.CTkFrame):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# About 다이얼로그
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class AboutDialog(ctk.CTkToplevel):
+    """버전 / 저작권 정보 팝업."""
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("MCAL 정보")
+        self.geometry("400x320")
+        self.resizable(False, False)
+        self.grab_set()          # modal
+        self.lift()
+        self.after(50, self.focus)
+        self._build()
+
+    def _build(self):
+        # ── 헤더 배너 ────────────────────────────────────────────────────────
+        banner = ctk.CTkFrame(self, fg_color=NAVY, corner_radius=0)
+        banner.pack(fill="x")
+        ctk.CTkLabel(
+            banner,
+            text="⚙  MCAL",
+            font=ctk.CTkFont(size=26, weight="bold"),
+            text_color="white",
+        ).pack(pady=(18, 2))
+        ctk.CTkLabel(
+            banner,
+            text="Multi-Channel Sensor Calibration Tool",
+            font=ctk.CTkFont(size=11),
+            text_color="#a0c4e8",
+        ).pack(pady=(0, 16))
+
+        # ── 정보 테이블 ───────────────────────────────────────────────────────
+        info_frame = ctk.CTkFrame(self, fg_color="transparent")
+        info_frame.pack(fill="x", padx=30, pady=(18, 8))
+
+        rows = [
+            ("버전",    f"v{APP_VERSION}"),
+            ("빌드 날짜", APP_DATE),
+            ("지원 센서", "PT100 / PT1000 / Strain 350Ω"),
+            ("채널",    "CH01 ~ CH16  (최대 16채널)"),
+            ("ADC 범위", "±10 V  (16-bit, 65536 count)"),
+        ]
+        for i, (lbl, val) in enumerate(rows):
+            bg = "#2b2b3b" if i % 2 == 0 else "transparent"
+            row_f = ctk.CTkFrame(info_frame, fg_color=bg, corner_radius=4)
+            row_f.pack(fill="x", pady=1)
+            ctk.CTkLabel(row_f, text=lbl, width=90, anchor="w",
+                         font=ctk.CTkFont(weight="bold"),
+                         text_color="#a0c4e8").pack(side="left", padx=(10, 4), pady=4)
+            ctk.CTkLabel(row_f, text=val, anchor="w").pack(side="left", padx=4, pady=4)
+
+        # ── 저작권 ────────────────────────────────────────────────────────────
+        ctk.CTkLabel(
+            self,
+            text=APP_COPYRIGHT,
+            font=ctk.CTkFont(size=11),
+            text_color="gray60",
+        ).pack(pady=(8, 4))
+
+        ctk.CTkButton(self, text="닫기", width=100,
+                      fg_color=NAVY, hover_color="#2d6aad",
+                      command=self.destroy).pack(pady=(4, 16))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 메인 앱
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -976,6 +1053,17 @@ class App(ctk.CTk):
             hdr, text="MCAL  |  PT100 / PT1000 / Strain 350Ω  |  CH01 ~ CH16",
             font=ctk.CTkFont(size=11), text_color="#a0c4e8",
         ).pack(side="left", padx=4)
+        ctk.CTkLabel(
+            hdr, text=f"v{APP_VERSION}",
+            font=ctk.CTkFont(size=10), text_color="#6a9ec8",
+        ).pack(side="left", padx=(8, 0))
+        ctk.CTkButton(
+            hdr, text="정보",
+            width=52, height=28,
+            fg_color="#2d5a8e", hover_color="#3a72b0",
+            font=ctk.CTkFont(size=11),
+            command=self._show_about,
+        ).pack(side="right", padx=12)
 
         # 메인 탭뷰
         tabs = ctk.CTkTabview(self, anchor="nw")
@@ -991,6 +1079,9 @@ class App(ctk.CTk):
 
         SettingsTab(tabs.tab("설정"), self._settings,
                     on_save=self._on_settings_saved).pack(fill="both", expand=True)
+
+    def _show_about(self):
+        AboutDialog(self)
 
     def _on_settings_saved(self, data: dict):
         self._settings.update(data)
