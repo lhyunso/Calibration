@@ -159,8 +159,9 @@ class CalibrationTab(ctk.CTkFrame):
         # 교정 설정
         self._section_lbl(left, row, "[ 교정 설정 ]"); row += 1
         setup_fields = [
-            ("케이블",     "cable",         s.get("cable", "전용케이블")),
-            ("Inst. Gain", "inst_amp_gain", "1"),
+            ("케이블",       "cable",         s.get("cable", "전용케이블")),
+            ("Exc. (mA)",   "excitation_ma", "1.0"),
+            ("Inst. Gain",  "inst_amp_gain", "1"),
             ("문서번호",   "doc_number",    f"CAL-{datetime.now().strftime('%Y')}-0001"),
             ("Rev",        "revision",      "00"),
         ]
@@ -294,7 +295,11 @@ class CalibrationTab(ctk.CTkFrame):
         self._clear_csv_rows()
         for r in self._sensor.default_resistances:
             self._add_csv_row(resistance=r)
-        # inst_amp_gain 기본값 자동 전환 (RTD:10 / Strain:100)
+        # excitation_ma / inst_amp_gain 기본값 자동 전환
+        if "excitation_ma" in self._meta_entries:
+            entry = self._meta_entries["excitation_ma"]
+            entry.delete(0, "end")
+            entry.insert(0, str(self._sensor.excitation * 1000))  # A → mA
         if "inst_amp_gain" in self._meta_entries:
             entry = self._meta_entries["inst_amp_gain"]
             entry.delete(0, "end")
@@ -591,10 +596,11 @@ class CalibrationTab(ctk.CTkFrame):
                 sensor = self._sensor or get_sensor("pt100")
                 meta   = self._collect_meta()
                 gain   = float(meta.get("inst_amp_gain", "1") or "1")
+                exc_ma = float(meta.get("excitation_ma", str(sensor.excitation * 1000)) or str(sensor.excitation * 1000))
                 cals   = calibrate_all_channels(
                     ds,
                     r_nominal=sensor.r_nominal,
-                    excitation=sensor.excitation,
+                    excitation=exc_ma / 1000.0,   # mA → A (참조용)
                     inst_amp_gain=gain,
                     tolerance=sensor.tolerance_ohm,
                     sensor=sensor,
