@@ -172,8 +172,9 @@ class CalibrationTab(ctk.CTkFrame):
             ("케이블",       "cable",         s.get("cable", "전용케이블")),
             ("Exc. (mA)",   "excitation_ma", "1.0"),
             ("Inst. Gain",  "inst_amp_gain", "1"),
-            ("문서번호",   "doc_number",    f"CAL-{datetime.now().strftime('%Y')}-0001"),
-            ("Rev",        "revision",      "00"),
+            ("허용오차 (Ω)", "tolerance_ohm", "0.385"),
+            ("문서번호",     "doc_number",    f"CAL-{datetime.now().strftime('%Y')}-0001"),
+            ("Rev",         "revision",      "00"),
         ]
         for label, key, default in setup_fields:
             row = self._meta_row(left, row, label, key, default)
@@ -305,15 +306,16 @@ class CalibrationTab(ctk.CTkFrame):
         self._clear_csv_rows()
         for r in self._sensor.default_resistances:
             self._add_csv_row(resistance=r)
-        # excitation_ma / inst_amp_gain 기본값 자동 전환
+        # excitation_ma / inst_amp_gain / tolerance_ohm 기본값 자동 전환
         if "excitation_ma" in self._meta_entries:
-            entry = self._meta_entries["excitation_ma"]
-            entry.delete(0, "end")
-            entry.insert(0, str(self._sensor.excitation * 1000))  # A → mA
+            e = self._meta_entries["excitation_ma"]
+            e.delete(0, "end"); e.insert(0, str(self._sensor.excitation * 1000))
         if "inst_amp_gain" in self._meta_entries:
-            entry = self._meta_entries["inst_amp_gain"]
-            entry.delete(0, "end")
-            entry.insert(0, str(int(self._sensor.inst_amp_gain)))
+            e = self._meta_entries["inst_amp_gain"]
+            e.delete(0, "end"); e.insert(0, str(int(self._sensor.inst_amp_gain)))
+        if "tolerance_ohm" in self._meta_entries:
+            e = self._meta_entries["tolerance_ohm"]
+            e.delete(0, "end"); e.insert(0, str(self._sensor.tolerance_ohm))
 
     def _clear_csv_rows(self):
         for widgets in self._csv_rows:
@@ -601,14 +603,15 @@ class CalibrationTab(ctk.CTkFrame):
                 self.after(0, lambda: self._set_status("계산 중…", "orange"))
                 sensor = self._sensor or get_sensor("pt100")
                 meta   = self._collect_meta()
-                gain   = float(meta.get("inst_amp_gain", "1") or "1")
-                exc_ma = float(meta.get("excitation_ma", str(sensor.excitation * 1000)) or str(sensor.excitation * 1000))
-                cals   = calibrate_all_channels(
+                gain      = float(meta.get("inst_amp_gain", "1") or "1")
+                exc_ma    = float(meta.get("excitation_ma", str(sensor.excitation * 1000)) or str(sensor.excitation * 1000))
+                tolerance = float(meta.get("tolerance_ohm", str(sensor.tolerance_ohm)) or str(sensor.tolerance_ohm))
+                cals      = calibrate_all_channels(
                     ds,
                     r_nominal=sensor.r_nominal,
-                    excitation=exc_ma / 1000.0,   # mA → A (참조용)
+                    excitation=exc_ma / 1000.0,   # mA → A
                     inst_amp_gain=gain,
-                    tolerance=sensor.tolerance_ohm,
+                    tolerance=tolerance,
                     sensor=sensor,
                 )
                 self._calibrations = cals
@@ -992,16 +995,13 @@ class AboutDialog(ctk.CTkToplevel):
             text_color="#a0c4e8",
         ).pack(pady=(0, 16))
 
-        # ── 정보 테이블 ───────────────────────────────────────────────────────
+        # ── 버전 / 날짜 ───────────────────────────────────────────────────────
         info_frame = ctk.CTkFrame(self, fg_color="transparent")
         info_frame.pack(fill="x", padx=30, pady=(18, 8))
 
         rows = [
-            ("버전",    f"v{APP_VERSION}"),
+            ("버전",      f"v{APP_VERSION}"),
             ("빌드 날짜", APP_DATE),
-            ("지원 센서", "PT100 / PT1000 / Strain 350Ω"),
-            ("채널",    "CH01 ~ CH16  (최대 16채널)"),
-            ("ADC 범위", "±10 V  (16-bit, 65536 count)"),
         ]
         for i, (lbl, val) in enumerate(rows):
             bg = "#2b2b3b" if i % 2 == 0 else "transparent"
@@ -1016,9 +1016,9 @@ class AboutDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             self,
             text=APP_COPYRIGHT,
-            font=ctk.CTkFont(size=11),
-            text_color="gray60",
-        ).pack(pady=(8, 4))
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#a0c4e8",
+        ).pack(pady=(16, 2))
 
         ctk.CTkButton(self, text="닫기", width=100,
                       fg_color=NAVY, hover_color="#2d6aad",

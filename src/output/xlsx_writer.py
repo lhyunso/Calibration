@@ -243,6 +243,10 @@ class CalibrationXlsxWriter:
         if calibrations:
             first = next(iter(calibrations.values()))
             self.resistances = sorted(first.voltages_avg.keys())
+        # 허용오차: GUI 설정값 우선, 없으면 센서 기본값
+        self.tolerance = float(
+            self.meta.get("tolerance_ohm") or sensor.tolerance_ohm
+        )
 
     # ── Cover / Summary sheet ─────────────────────────────────────────────────
 
@@ -320,7 +324,7 @@ class CalibrationXlsxWriter:
             ("모사저항 값",
              " / ".join(f"{r:.0f}Ω" for r in self.resistances),
              "허용 편차 (Tolerance)",
-             f"±{self.sensor.tolerance_ohm:.3f} Ω"),
+             f"±{self.tolerance:.3f} Ω"),
         ]
         for lbl1, v1, lbl2, v2 in setup_pairs:
             _lbl(ws, r, 1, lbl1, bold=True)
@@ -371,7 +375,7 @@ class CalibrationXlsxWriter:
         """Write a 16-channel results table; return next free row."""
         rs   = self.resistances
         n_rs = len(rs)
-        tol  = self.sensor.tolerance_ohm
+        tol  = self.tolerance
 
         # Header row 1
         r = start_row
@@ -447,7 +451,7 @@ class CalibrationXlsxWriter:
         cal = self.cals[ch]
         rs  = self.resistances
         n   = len(rs)
-        tol = self.sensor.tolerance_ohm
+        tol = self.tolerance
 
         # Column layout: A=section, B=item, C…=resistance values
         COL_SEC  = 1
