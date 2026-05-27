@@ -22,15 +22,21 @@ class SensorConfig:
     ref_formula: str = ""
 
     def ref_voltage(self, r: float, gain: float = 1.0) -> float:
-        """Calculate reference voltage for given resistance. Override per sensor."""
-        raise NotImplementedError
+        """Calculate reference voltage for given resistance.
+        Formula (single-element varying bridge, current-source excitation):
+            V_ref = (V_B / 2) × (ΔR / R_nom) × gain
+                  = I_exc × ΔR × gain / 2
+        where V_B = I_exc × R_nom, ΔR = r − R_nom.
+        Override per sensor if needed.
+        """
+        return (r - self.r_nominal) * self.excitation * gain / 2.0
 
     def resistance_from_voltage(self, voltage: float, gain: float) -> float:
         """Convert measured voltage back to resistance.
-        RTD (PT100/PT1000): V = (R - R_nom) / (2×R_nom) × gain
-          → R = 2×R_nom×V / gain + R_nom
-        Override this method for sensors with different bridge excitation scaling.
+        Inverts: V_ref = I_exc × ΔR × G_inst / 2  (with calibration gain g ≈ 1)
+            ΔR = V × 2 / (gain × I_exc × G_inst)
+             R = R_nom + V × 2 / (gain × excitation × inst_amp_gain)
         """
         if gain == 0:
             return self.r_nominal
-        return (2 * self.r_nominal * voltage / gain) + self.r_nominal
+        return self.r_nominal + voltage * 2.0 / (gain * self.excitation * self.inst_amp_gain)

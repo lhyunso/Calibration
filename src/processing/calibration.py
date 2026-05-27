@@ -4,14 +4,16 @@ Core calibration math for Quarter Bridge measurement modules.
 Calibration flow:
 1. Extract AVG/MIN/MAX decimals from CSV for each resistance step
 2. Convert decimals → voltage: V = (int(D) - 32767) × (20/65536)
-3. Reference voltage (normalized, no G_inst):
-     V_ref = (R − R_nom) / (2×R_nom)
-4. G_cal: slope of measured voltage vs reference voltage
+3. Reference voltage (full physical formula, includes I_exc & G_inst):
+     V_ref = I_exc × ΔR × G_inst / 2
+           = (V_B/2) × (ΔR/R_nom) × G_inst   where V_B = I_exc × R_nom
+4. G_cal: slope of V_meas vs V_ref  →  G_cal ≈ 1.0 for ideal channel
      G_cal = (V_meas_max − V_meas_min) / (V_ref_max − V_ref_min)
 5. Resistance from voltage:
-     R = 2×R_nom×V / G_cal + R_nom
+     R = R_nom + V × 2 / (G_cal × I_exc × G_inst)
 6. V_offset (voltage domain, for ground software: V_meas/G_cal + V_offset):
-     Method 2-1: residual at R_nom
+     V_offset = −ΔR_offset × I_exc × G_inst / 2
+     Method 2-1: offset at R_nom
      Method 2-2: mean of all residuals
 """
 from dataclasses import dataclass, field
@@ -101,19 +103,24 @@ def calibrate_channel(
 
     # ── 센서별 공식 선택 ────────────────────────────────────────────────────
     def _ref_v(r: float) -> float:
-        """Normalized reference voltage (no G_inst): (R - R_nom) / (2 × R_nom)"""
+        """Full reference voltage including excitation & inst-amp gain:
+        V_ref = I_exc × ΔR × G_inst / 2
+        G_cal = V_meas / V_ref  →  G_cal ≈ 1 for ideal channel.
+        """
         if sensor is not None:
-            # sensor.ref_voltage는 × G_inst 포함 — 여기선 G_inst=1로 호출
-            return sensor.ref_voltage(r, 1.0)
-        return (r - r_nominal) / (2 * r_nominal)
+            return sensor.ref_voltage(r, inst_amp_gain)
+        return (r - r_nominal) * excitation * inst_amp_gain / 2.0
 
     def _r_from_v(v: float, g: float) -> float:
-        """Resistance from measured voltage using calibrated gain."""
-        if sensor is not None:
-            return sensor.resistance_from_voltage(v, g)
+        """Resistance from measured voltage using calibrated gain.
+        Inverts V_ref = I_exc × ΔR × G_inst / 2:
+            R = R_nom + V × 2 / (g × I_exc × G_inst)
+        Uses calibrate_channel parameters (excitation, inst_amp_gain) — not sensor defaults —
+        so GUI-configured gain overrides are respected.
+        """
         if g == 0:
             return r_nominal
-        return (2 * r_nominal * v / g) + r_nominal
+        return r_nominal + v * 2.0 / (g * excitation * inst_amp_gain)
 
     # Step 1: Collect decimals and convert to voltages
     for r in resistances:
@@ -162,12 +169,11 @@ def calibrate_channel(
         cal.offset_mean = sum(cal.dev_after_gain.values()) / len(cal.dev_after_gain)
 
     # Step 5b: Voltage-domain offsets (지상SW 적용값: V_meas/G_cal + V_offset)
-    # V_offset = V_ref_normalized(R) - V_meas(R)/G_cal
-    # = (R - R_nom)/(2×R_nom) - V_meas(R)/G_cal
-    # = -offset_resistance / (2 × R_nom)
-    denom = 2.0 * r_nominal
-    cal.offset_100_v  = -cal.offset_100  / denom if denom else 0.0
-    cal.offset_mean_v = -cal.offset_mean / denom if denom else 0.0
+    # V_offset = -ΔR_offset × I_exc × G_inst / 2
+    # (converts resistance-domain offset to voltage domain of V_ref)
+    v_scale = excitation * inst_amp_gain / 2.0
+    cal.offset_100_v  = -cal.offset_100  * v_scale
+    cal.offset_mean_v = -cal.offset_mean * v_scale
 
     # Step 6: Method 2-1 final (offset by nominal R)
     for r in r_list:
