@@ -256,6 +256,7 @@ class CalibrationPdfWriter:
         if calibrations:
             first = next(iter(calibrations.values()))
             self.resistances = sorted(first.voltages_avg.keys())
+        self.tolerance = float(self.meta.get("tolerance_ohm") or sensor.tolerance_ohm)
 
     def _cover_elements(self, styles) -> list:
         fn  = _font()
@@ -334,7 +335,7 @@ class CalibrationPdfWriter:
                  "Inst. Amp. Gain",       str(self.meta.get("inst_amp_gain","1"))),
             _row("모사저항 값",
                  " / ".join(f"{r:.0f}Ω" for r in self.resistances),
-                 "허용 편차 (Tolerance)", f"±{self.sensor.tolerance_ohm:.3f} Ω"),
+                 "허용 편차 (Tolerance)", f"±{self.tolerance:.3f} Ω"),
             _row("샘플링 속도",          f"{self.meta.get('sampling_hz',100)} Hz",
                  "측정 시간",             f"{self.meta.get('duration_sec','-')} 초"),
             _row("채널 수 (Channels)",   str(len(self.channels)),
@@ -384,7 +385,7 @@ class CalibrationPdfWriter:
                 cal = self.calibrations[ch]
                 offset_val = getattr(cal, offset_key)
                 dev_dict   = getattr(cal, dev_key)
-                tol = self.sensor.tolerance_ohm
+                tol = self.tolerance
 
                 row_data = [
                     _cell(ch, styles),
@@ -415,7 +416,7 @@ class CalibrationPdfWriter:
     def _channel_elements(self, ch_idx: int, ch: str, styles) -> list:
         cal = self.calibrations[ch]
         rs = self.resistances
-        tol = self.sensor.tolerance_ohm
+        tol = self.tolerance
         elems = [PageBreak()]
 
         # Header

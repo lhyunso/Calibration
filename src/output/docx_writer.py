@@ -204,6 +204,7 @@ class CalibrationDocxWriter:
         if calibrations:
             first = next(iter(calibrations.values()))
             self.resistances = sorted(first.voltages_avg.keys())
+        self.tolerance = float(self.meta.get("tolerance_ohm") or sensor.tolerance_ohm)
 
     def _page_setup(self, doc: Document):
         section = doc.sections[0]
@@ -297,7 +298,7 @@ class CalibrationDocxWriter:
                    "Inst. Amp. Gain",          str(self.meta.get("inst_amp_gain", "1")))
         _info(10, "모사저항 값",
                   " / ".join(f"{r:.0f}Ω" for r in self.resistances),
-                   "허용 편차 (Tolerance)",   f"±{self.sensor.tolerance_ohm:.3f} Ω")
+                   "허용 편차 (Tolerance)",   f"±{self.tolerance:.3f} Ω")
         _info(11, "샘플링 속도",
                   f"{self.meta.get('sampling_hz', 100)} Hz",
                    "측정 시간",               f"{self.meta.get('duration_sec', '-')} 초")
@@ -363,7 +364,7 @@ class CalibrationDocxWriter:
 
             for j, r in enumerate(rs):
                 dev = cal.dev_final_100.get(r)
-                tol = cal.tolerance_max_100.get(r, self.sensor.tolerance_ohm)
+                tol = cal.tolerance_max_100.get(r, self.tolerance)
                 txt = _fmt(dev, 4) if dev is not None else "-"
                 c = row.cells[4 + j]
                 _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
@@ -409,7 +410,7 @@ class CalibrationDocxWriter:
                     _set_cell_bg(row.cells[i], bg)
             for j, r in enumerate(rs):
                 dev = cal.dev_final_mean.get(r)
-                tol = cal.tolerance_max_mean.get(r, self.sensor.tolerance_ohm)
+                tol = cal.tolerance_max_mean.get(r, self.tolerance)
                 txt = _fmt(dev, 4) if dev is not None else "-"
                 c = row.cells[4 + j]
                 _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
@@ -458,7 +459,7 @@ class CalibrationDocxWriter:
         _para(r1.cells[4], f"{cal.offset_100_v:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
         for j, r in enumerate(rs):
             dev = cal.dev_final_100.get(r)
-            tol = cal.tolerance_max_100.get(r, self.sensor.tolerance_ohm)
+            tol = cal.tolerance_max_100.get(r, self.tolerance)
             txt = _fmt(dev, 4) if dev is not None else "-"
             c = r1.cells[5 + j]
             _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
@@ -473,7 +474,7 @@ class CalibrationDocxWriter:
         _para(r2.cells[4], f"{cal.offset_mean_v:.6f}", size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
         for j, r in enumerate(rs):
             dev = cal.dev_final_mean.get(r)
-            tol = cal.tolerance_max_mean.get(r, self.sensor.tolerance_ohm)
+            tol = cal.tolerance_max_mean.get(r, self.tolerance)
             txt = _fmt(dev, 4) if dev is not None else "-"
             c = r2.cells[5 + j]
             _para(c, txt, size=8, align=WD_ALIGN_PARAGRAPH.CENTER,
