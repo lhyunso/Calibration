@@ -20,6 +20,8 @@ added_datas = [
     (str(ctk_path), "customtkinter"),
     # matplotlib 폰트·스타일시트
     (str(mpl_path / "mpl-data"), "matplotlib/mpl-data"),
+    # 캘리브레이션 레퍼런스 파일 (DOCX 템플릿, 3-Wire 엑셀 등)
+    ("reference", "reference"),
 ]
 
 # ── 숨겨진 import (동적 로더가 놓치는 것들) ─────────────────────────────────
@@ -48,8 +50,6 @@ hidden_imports = [
     "output.xlsx_writer",
     "output.docx_writer",
     "output.pdf_writer",
-    "reference",
-    "reference.three_wire",
 ]
 
 a = Analysis(

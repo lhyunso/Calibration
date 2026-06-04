@@ -4,15 +4,20 @@ Global configuration for Multi-Channel Sensor Calibration Tool (MCAL).
 import sys, os
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-# PyInstaller 번들 안에서는 실행 파일 위치를 기준으로 경로를 설정한다.
+# PyInstaller onefile 번들 동작:
+#   - sys.executable : 실제 exe 파일 경로 (출력 폴더 기준으로 사용)
+#   - sys._MEIPASS   : 런타임 임시 압축 해제 폴더 (번들 에셋 기준으로 사용)
+# 개발 모드에서는 두 경로 모두 프로젝트 루트를 가리킨다.
 if getattr(sys, "frozen", False):
-    _ROOT = os.path.dirname(sys.executable)
+    _ROOT       = os.path.dirname(sys.executable)   # 출력 디렉터리 기준
+    _BUNDLE_DIR = sys._MEIPASS                       # 번들 에셋 기준
 else:
-    _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _ROOT       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _BUNDLE_DIR = _ROOT
 
 BASE_DIR      = _ROOT
-REFERENCE_DIR = os.path.join(BASE_DIR, "reference")
-OUTPUT_DIR    = os.path.join(BASE_DIR, "outputs")
+REFERENCE_DIR = os.path.join(_BUNDLE_DIR, "reference")  # 번들 내 에셋
+OUTPUT_DIR    = os.path.join(_ROOT, "outputs")           # 사용자 출력 폴더
 OUTPUT_XLSX   = os.path.join(OUTPUT_DIR, "xlsx")
 OUTPUT_DOCX   = os.path.join(OUTPUT_DIR, "docx")
 OUTPUT_PDF    = os.path.join(OUTPUT_DIR, "pdf")
