@@ -38,8 +38,8 @@ from reference.three_wire import (
 )
 
 # ── 버전 정보 ──────────────────────────────────────────────────────────────────
-APP_VERSION   = "1.0.4"
-APP_DATE      = "2026-05-27"
+APP_VERSION   = "1.1.2"
+APP_DATE      = "2026-06-04"
 APP_COPYRIGHT = "© 2026 DANAM Systems Inc."
 APP_DESC      = (
     "Multi-Channel Sensor Calibration Tool\n"
